@@ -15,6 +15,12 @@
     "*://*.bitrix24.com/*",
     "https://web.whatsapp.com/*"
   ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.bitrix24.ru/*", "*://*.bitrix24.kz/*", "*://*.bitrix24.com/*", "https://whatsapp.com*"],
+      "js": ["bridge.js"]
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Bitrix WA Bot"

@@ -6,6 +6,31 @@
 // Содержит: PRICE_FILE_PATH, MESSAGE_VARIANTS, PRICE_FILE_NAMES, MAX_SENDS_PER_DAY, DELAYS, TOUCH1_MAX_MESSAGES, RU_MONTHS, RU_WEEKDAYS, SELECTORS, STORAGE_KEY, BOT_CONFIG, isScriptRunning, idleTimer, INSTANCE_ID, PHONE_WAIT_MS, IDLE_POLL_MS, MESSENGER_WAIT_MS, MESSENGER_ESC_GAP_MS, CHAT_BTN_WAIT_MS, MESSENGER_ANSWER_GRACE_MS, UNKNOWN_SOURCE_TEXT, currentCardId, cardAttempts, columnPreloaded, SEARCH_RESULT_ITEM_SELECTOR, WA_NEW_CHAT_MENU_RE, lastVariantIndex, MSG_SELECTOR, BITRIX_CHAT_SELECTORS, BITRIX_CHAT_DELAYS, BITRIX_FILE_UPLOAD_WAIT_MS, bitrixChatSending
 // =====================================================================================
 
+// Полифилл для работы старого кода внутри Tampermonkey
+if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+    window.chrome = window.chrome || {};
+    chrome.runtime = {
+        sendMessage: (payload) => window.postMessage({ source: 'BTX_TM_SCRIPT', payload }, '*'),
+        onMessage: {
+            addListener: (cb) => window.addEventListener('message', (e) => {
+                if (e.data && e.data.source === 'BTX_EXT_BG') cb(e.data, {}, () => {});
+            })
+        }
+    };
+    chrome.storage = {
+        local: {
+            get: async (keys) => {
+                const res = {};
+                (Array.isArray(keys) ? keys : [keys]).forEach(k => { res[k] = GM_getValue(k); });
+                return res;
+            },
+            set: async (obj) => {
+                Object.entries(obj).forEach(([k, v]) => GM_setValue(k, v));
+            }
+        }
+    };
+}
+
 const PRICE_FILE_PATH = 'https://github.com/ildarxxe/btx_plugin/blob/main/price.pdf';
 
 const MESSAGE_VARIANTS = {
