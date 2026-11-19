@@ -58,39 +58,27 @@ function findBitrixChatFileInput() {
 // may not load moz-extension://"), пока домен Bitrix не добавлен в web_accessible_resources. Поэтому файл
 // сначала просим у background.js (у него доступ к файлам расширения есть всегда), а прямой fetch — запасной вариант.
 async function loadPriceFileDataTransfer() {
-    let blob = null;
+    const pdfUrl = 'https://githubusercontent.com';
 
-    // 1) через background
-    const resp = await sendRuntimeMessage({ action: 'getPriceFile' });
-    if (resp && resp.ok && resp.base64) {
-        try {
-            const bin = atob(resp.base64);
-            const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            blob = new Blob([bytes], { type: 'application/pdf' });
-        } catch (e) {
-            console.warn("[Бот Bitrix] Не удалось разобрать файл от background:", e);
-        }
-    } else {
-        console.warn("[Бот Bitrix] background не вернул price.pdf (обновили ли background.js и перезагрузили расширение?):", resp);
-    }
-
-    // 2) прямой fetch (работает, если домен Bitrix есть в web_accessible_resources → matches)
-    if (!blob) {
-        try {
-            const response = await fetch(chrome.runtime.getURL(PRICE_FILE_PATH));
-            blob = await response.blob();
-        } catch (e) {
-            console.warn("[Бот Bitrix] Прямая загрузка price.pdf тоже не удалась:", e);
-        }
-    }
-
-    if (!blob) {
-        throw new Error('не удалось загрузить price.pdf. Обновите background.js (там обработчик getPriceFile) и перезагрузите расширение');
-    }
-    const dt = new DataTransfer();
-    dt.items.add(new File([blob], pickFileName(), { type: 'application/pdf' }));
-    return dt;
+    return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: pdfUrl,
+            responseType: "blob",
+            onload: (res) => {
+                if (res.status >= 200 && res.status < 300 && res.response) {
+                    const dt = new DataTransfer();
+                    dt.items.add(new File([res.response], pickFileName(), { type: "application/pdf" }));
+                    resolve(dt);
+                } else {
+                    reject(new Error(`Не удалось загрузить price.pdf с GitHub (статус ${res.status})`));
+                }
+            },
+            onerror: () => {
+                reject(new Error("Ошибка сети при загрузке price.pdf с GitHub"));
+            }
+        });
+    });
 }
 
 async function sendBitrixChatFile(preloadedDt) {
