@@ -31,7 +31,7 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
     };
 }
 
-const PRICE_FILE_PATH = 'https://github.com/ildarxxe/btx_plugin/blob/main/price.pdf';
+const PRICE_FILE_PATH = 'https://raw.githubusercontent.com/ildarxxe/btx_plugin/refs/heads/main/price.pdf';
 
 const MESSAGE_VARIANTS = {
     msg1: [
