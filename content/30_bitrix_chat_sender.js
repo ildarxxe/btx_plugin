@@ -58,23 +58,14 @@ function findBitrixChatFileInput() {
 // may not load moz-extension://"), пока домен Bitrix не добавлен в web_accessible_resources. Поэтому файл
 // сначала просим у background.js (у него доступ к файлам расширения есть всегда), а прямой fetch — запасной вариант.
 async function loadPriceFileDataTransfer() {
-    return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: PRICE_FILE_PATH,
-            responseType: "blob",
-            onload: (res) => {
-                if (res.status >= 200 && res.status < 300 && res.response) {
-                    const dt = new DataTransfer();
-                    dt.items.add(new File([res.response], pickFileName(), { type: "application/pdf" }));
-                    resolve(dt);
-                } else {
-                    reject(new Error(`Не удалось загрузить price.pdf (статус ${res.status})`));
-                }
-            },
-            onerror: () => reject(new Error("Ошибка сети при загрузке price.pdf"))
-        });
-    });
+    const response = await fetch(PRICE_FILE_PATH);
+    if (!response.ok) {
+        throw new Error(`Не удалось загрузить price.pdf (статус ${response.status})`);
+    }
+    const blob = await response.blob();
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], pickFileName(), { type: 'application/pdf' }));
+    return dt;
 }
 
 
