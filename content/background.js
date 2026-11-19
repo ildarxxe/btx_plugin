@@ -1,62 +1,54 @@
 // ==========================================
-// BACKGROUND: связь между Bitrix24 и WhatsApp Web
+// BACKGROUND: связь между Bitrix24 и WhatsApp Web (для Tampermonkey)
 // ==========================================
 
-// Слушаем сообщения от контент-скриптов
+// Вспомогательная функция: доставляет сообщение на страницу, где работает Tampermonkey
+async function sendToTampermonkey(tabId, payload) {
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            func: (msg) => {
+                window.postMessage({ source: 'BTX_EXT_BG', ...msg }, '*');
+            },
+            args: [payload]
+        });
+    } catch (err) {
+        console.error("[BG] Не удалось передать команду на вкладку:", err);
+    }
+}
+
+// Слушаем сообщения от popup_loader.js (переходник от страницы и iframe)
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "openWhatsAppAndSearch") {
-        // sender.tab — это вкладка Bitrix, с которой пришло сообщение
         const bitrixTabId = sender.tab ? sender.tab.id : null;
         handleWhatsAppTransition(request.data, bitrixTabId);
     } else if (request.action === "returnToBitrix") {
         handleBitrixReturn(request.stageType);
-    } else if (request.action === "getPriceFile") {
-        // Вкладка Bitrix не может сама прочитать файл расширения (Firefox: "Security Error ... moz-extension://"),
-        // поэтому читаем price.pdf здесь и отдаём в base64
+    } else if (request.action === "FORWARD_TO_TAB") {
+        // Команды от popup (Старт / Стоп)
         (async () => {
-            try {
-                const resp = await fetch(chrome.runtime.getURL('price.pdf'));
-                const buf = await resp.arrayBuffer();
-                sendResponse({ ok: true, base64: arrayBufferToBase64(buf) });
-            } catch (e) {
-                console.error("[BG] Не удалось прочитать price.pdf:", e);
-                sendResponse({ ok: false, error: String(e) });
+            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (activeTab) {
+                await sendToTampermonkey(activeTab.id, request.payload);
             }
         })();
-        return true; // ответ асинхронный
     }
-    // sendResponse не используем, канал закрываем сразу
     return false;
 });
 
-function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
-    return btoa(binary);
-}
-
 async function handleWhatsAppTransition(data, bitrixTabId) {
     try {
-        // Сохраняем состояние + id вкладки Bitrix (background в Firefox может "засыпать",
-        // поэтому переменные в памяти ненадёжны — храним в storage)
         await chrome.storage.local.set({ botState: data, bitrixTabId: bitrixTabId });
         console.log("[BG] Сохранили botState и bitrixTabId:", bitrixTabId);
 
         const tabs = await chrome.tabs.query({});
-
-        // Ищем вкладку WhatsApp ТОЛЬКО по заголовку (открыто два WhatsApp, нужен Business)
         const targetTab = tabs.find(tab => tab.title && tab.title.includes("WhatsApp Business"));
 
         if (targetTab) {
             await chrome.tabs.update(targetTab.id, { active: true });
             await chrome.windows.update(targetTab.windowId, { focused: true });
 
-            chrome.tabs.sendMessage(targetTab.id, { action: "startWhatsAppAutomation", data: data })
-                .catch(err => console.error("[BG] Не доставлено в WhatsApp:", err));
+            await sendToTampermonkey(targetTab.id, { action: "startWhatsAppAutomation", data: data });
         } else {
             console.warn("[BG] Вкладка с заголовком 'WhatsApp Business' не найдена!");
         }
@@ -70,7 +62,6 @@ async function handleBitrixReturn(stageType) {
         const stored = await chrome.storage.local.get(['bitrixTabId']);
         let bitrixTab = null;
 
-        // 1. Сначала пробуем вкладку, с которой стартовали
         if (stored.bitrixTabId) {
             try {
                 bitrixTab = await chrome.tabs.get(stored.bitrixTabId);
@@ -79,9 +70,6 @@ async function handleBitrixReturn(stageType) {
             }
         }
 
-        // 2. Запасной вариант: ищем любую вкладку с "bitrix24" в адресе.
-        // (Шаблон "*://*.bitrix24.*/*" недопустим — звёздочка после точки в домене не разрешена,
-        // поэтому раньше tabs.query падал с ошибкой.)
         if (!bitrixTab) {
             const allTabs = await chrome.tabs.query({});
             bitrixTab = allTabs.find(tab => tab.url && tab.url.includes("bitrix24"));
@@ -92,19 +80,16 @@ async function handleBitrixReturn(stageType) {
             return;
         }
 
-        console.log("[BG] Возвращаемся во вкладку Bitrix:", bitrixTab.id, bitrixTab.url);
-
+        console.log("[BG] Возвращаемся во вкладку Bitrix:", bitrixTab.id);
         await chrome.tabs.update(bitrixTab.id, { active: true });
         await chrome.windows.update(bitrixTab.windowId, { focused: true });
 
-        // Небольшая пауза, чтобы вкладка успела "проснуться"
         await new Promise(resolve => setTimeout(resolve, 800));
 
-        await chrome.tabs.sendMessage(bitrixTab.id, {
+        await sendToTampermonkey(bitrixTab.id, {
             action: "resumeBitrixWorkflow",
             stageType: stageType
         });
-        console.log("[BG] resumeBitrixWorkflow отправлен.");
     } catch (e) {
         console.error("[BG] Ошибка handleBitrixReturn:", e);
     }
