@@ -1,0 +1,16 @@
+// В manifest.json в блоке content_scripts замените  "js": ["content.js"]  на этот список
+// (порядок ВАЖЕН). Если content.js указан в нескольких блоках content_scripts (Bitrix и WhatsApp) — замените в каждом.
+// Папку content/ положите рядом с manifest.json, старый content.js больше не подключайте.
+
+"js": [
+    "content/00_config.js",
+    "content/01_utils.js",
+    "content/10_bitrix_queue.js",
+    "content/11_bitrix_messenger.js",
+    "content/12_bitrix_stage.js",
+    "content/20_wa_search.js",
+    "content/21_wa_chat.js",
+    "content/22_wa_send.js",
+    "content/30_bitrix_chat_sender.js",
+    "content/99_main.js"
+]

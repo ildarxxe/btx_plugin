@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 280px;
+            padding: 15px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f9f9fb;
+            color: #222;
+            margin: 0;
+        }
+        h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: #111;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+        }
+        .control-group {
+            margin-bottom: 12px;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        select, input[type="text"] {
+            width: 100%;
+            padding: 7px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        .checkbox-row input {
+            width: auto;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
+        }
+        #startBtn {
+            background-color: #25D366;
+            color: white;
+        }
+        #startBtn:hover {
+            background-color: #1ebe5d;
+        }
+        #stopBtn {
+            background-color: #ff4d4f;
+            color: white;
+        }
+        #stopBtn:hover {
+            background-color: #d9363e;
+        }
+        #statusText {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<h3>Авто-рассылка Bitrix → WA</h3>
+
+<div class="control-group">
+    <label for="modeSelect">Выберите колонку (статус):</label>
+    <select id="modeSelect">
+        <option value="new">Новая (отправить прайс → 1 касание)</option>
+        <option value="touch1">1 касание (напомнить → 2 касание)</option>
+    </select>
+</div>
+
+<div class="control-group">
+    <div class="checkbox-row">
+        <!-- По умолчанию тестовый режим ВЫКЛЮЧЕН (раньше здесь стояло checked) -->
+        <input type="checkbox" id="testModeCheck">
+        <label for="testModeCheck" style="margin:0; font-weight:normal;">Тестовый режим (мой номер)</label>
+    </div>
+    <input type="text" id="testPhoneInput" value="87781193946" style="margin-top: 6px;" placeholder="Тестовый номер">
+</div>
+
+<button id="startBtn">▶ Запустить рассылку</button>
+<button id="stopBtn">⏹ Остановить / Сбросить</button>
+
+<div id="statusText">Готов к работе</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "manifest_version": 3,
+  "name": "Bitrix to WhatsApp AutoSender",
+  "version": "1.1",
+  "description": "Автоматизация отправки прайсов и смены статусов в Битрикс24 через WhatsApp Web",
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.bitrix24.ru/*",
+    "*://*.bitrix24.kz/*",
+    "*://*.bitrix24.com/*",
+    "https://web.whatsapp.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bitrix WA Bot"
+  },
+  "background": {
+    "scripts": ["content/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.bitrix24.ru/*",
+        "*://*.bitrix24.kz/*",
+        "*://*.bitrix24.com/*"
+      ],
+      "js": [
+        "content/00_config.js",
+        "content/01_utils.js",
+        "content/10_bitrix_queue.js",
+        "content/11_bitrix_messenger.js",
+        "content/12_bitrix_stage.js",
+        "content/20_wa_search.js",
+        "content/21_wa_chat.js",
+        "content/22_wa_send.js",
+        "content/30_bitrix_chat_sender.js",
+        "content/31_manual_open_chat.js",
+        "content/99_main.js"
+      ]
+    },
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "content/00_config.js",
+        "content/01_utils.js",
+        "content/10_bitrix_queue.js",
+        "content/11_bitrix_messenger.js",
+        "content/12_bitrix_stage.js",
+        "content/20_wa_search.js",
+        "content/21_wa_chat.js",
+        "content/22_wa_send.js",
+        "content/30_bitrix_chat_sender.js",
+        "content/31_manual_open_chat.js",
+        "content/99_main.js"
+      ]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["price.pdf"],
+      "matches": ["https://web.whatsapp.com/*"]
+    }
+  ]
+}
