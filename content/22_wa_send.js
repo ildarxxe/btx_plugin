@@ -53,6 +53,24 @@ function clickAttachMenuItem(texts) {
     return true;
 }
 
+function downloadFileBlob(url) {
+    return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: url,
+            responseType: "blob",
+            onload: (res) => {
+                if (res.status >= 200 && res.status < 300 && res.response) {
+                    resolve(res.response);
+                } else {
+                    reject(new Error(`HTTP статус: ${res.status}`));
+                }
+            },
+            onerror: (err) => reject(err)
+        });
+    });
+}
+
 async function sendFileToChat() {
     console.log(`[Бот WA] Отправка PDF файла...`);
 
@@ -64,15 +82,13 @@ async function sendFileToChat() {
 
     let dt;
     try {
-        const fileUrl = chrome.runtime.getURL(PRICE_FILE_PATH);
-        const response = await fetch(fileUrl);
-        const blob = await response.blob();
+        const blob = await downloadFileBlob(PRICE_FILE_PATH);
         const file = new File([blob], pickFileName(), { type: "application/pdf" });
         dt = new DataTransfer();
         dt.items.add(file);
     } catch (e) {
-        console.error("[Бот WA] Не удалось загрузить price.pdf из расширения:", e);
-        showAlert("Не удалось загрузить price.pdf. Проверьте, что файл лежит в папке расширения и указан в web_accessible_resources в manifest.json.");
+        console.error("[Бот WA] Не удалось загрузить price.pdf с GitHub:", e);
+        showAlert("Не удалось загрузить price.pdf с GitHub. Проверьте ссылку и наличие @grant GM_xmlhttpRequest в Tampermonkey.");
         return;
     }
 

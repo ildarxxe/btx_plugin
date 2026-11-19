@@ -6,7 +6,7 @@
 // Содержит: PRICE_FILE_PATH, MESSAGE_VARIANTS, PRICE_FILE_NAMES, MAX_SENDS_PER_DAY, DELAYS, TOUCH1_MAX_MESSAGES, RU_MONTHS, RU_WEEKDAYS, SELECTORS, STORAGE_KEY, BOT_CONFIG, isScriptRunning, idleTimer, INSTANCE_ID, PHONE_WAIT_MS, IDLE_POLL_MS, MESSENGER_WAIT_MS, MESSENGER_ESC_GAP_MS, CHAT_BTN_WAIT_MS, MESSENGER_ANSWER_GRACE_MS, UNKNOWN_SOURCE_TEXT, currentCardId, cardAttempts, columnPreloaded, SEARCH_RESULT_ITEM_SELECTOR, WA_NEW_CHAT_MENU_RE, lastVariantIndex, MSG_SELECTOR, BITRIX_CHAT_SELECTORS, BITRIX_CHAT_DELAYS, BITRIX_FILE_UPLOAD_WAIT_MS, bitrixChatSending
 // =====================================================================================
 
-const PRICE_FILE_PATH = 'price.pdf';
+const PRICE_FILE_PATH = 'https://github.com/ildarxxe/btx_plugin/blob/main/price.pdf';
 
 const MESSAGE_VARIANTS = {
     msg1: [
