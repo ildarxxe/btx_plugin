@@ -17,7 +17,12 @@
   ],
   "content_scripts": [
     {
-      "matches": ["*://*.bitrix24.ru/*", "*://*.bitrix24.kz/*", "*://*.bitrix24.com/*", "https://whatsapp.com*"],
+      "matches": [
+        "*://*.bitrix24.ru/*",
+        "*://*.bitrix24.kz/*",
+        "*://*.bitrix24.com/*",
+        "https://web.whatsapp.com/*"
+      ],
       "js": ["bridge.js"]
     }
   ],
@@ -26,12 +31,12 @@
     "default_title": "Bitrix WA Bot"
   },
   "background": {
-    "scripts": ["content/background.js"]
+    "scripts": ["content/background.js"],
+    "service_worker": "content/background.js"
   },
-  "web_accessible_resources": [
-    {
-      "resources": ["price.pdf"],
-      "matches": ["https://web.whatsapp.com/*"]
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "btx-wa-autosender@elki.kz"
     }
-  ]
+  }
 }
