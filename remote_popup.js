@@ -64,6 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isRecordingHotkey = false;
     let pendingFileTargetIndex = null;
     let pendingAlbumTargetIndex = null;
+    let textSaveTimer = null;
 
     let flowConfig = {
         hotkeys: {
@@ -91,6 +92,31 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error('[Popup] Ошибка postMessage:', e);
         }
+    }
+
+    function persistFlowConfig(statusMsg = '') {
+        const payload = {
+            hotkeys: flowConfig.hotkeys,
+            flows: flowConfig.flows,
+            updatedAt: Date.now()
+        };
+        postToParent({
+            action: 'SAVE_CUSTOM_FLOW',
+            payload
+        });
+        if (statusMsg && editorStatus) {
+            editorStatus.textContent = statusMsg;
+            setTimeout(() => {
+                if (editorStatus.textContent === statusMsg) editorStatus.textContent = '';
+            }, 2500);
+        }
+    }
+
+    function scheduleTextPersist() {
+        clearTimeout(textSaveTimer);
+        textSaveTimer = setTimeout(() => {
+            persistFlowConfig();
+        }, 300);
     }
 
     function mergeFlowConfig(incoming) {
@@ -209,6 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 items[idx - 1] = items[idx];
                 items[idx] = tmp;
                 renderSteps();
+                persistFlowConfig('Порядок сохранён ✅');
             });
 
             const downBtn = document.createElement('button');
@@ -222,6 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 items[idx + 1] = items[idx];
                 items[idx] = tmp;
                 renderSteps();
+                persistFlowConfig('Порядок сохранён ✅');
             });
 
             const delBtn = document.createElement('button');
@@ -231,6 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
             delBtn.addEventListener('click', () => {
                 items.splice(idx, 1);
                 renderSteps();
+                persistFlowConfig('Элемент удалён ✅');
             });
 
             actions.append(upBtn, downBtn, delBtn);
@@ -243,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ta.placeholder = 'Введите текст сообщения...';
                 ta.addEventListener('input', (e) => {
                     item.text = e.target.value;
+                    scheduleTextPersist();
                 });
                 card.appendChild(ta);
             } else if (item.type === 'images_with_text') {
@@ -272,6 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 captionTa.placeholder = 'Текст к фотографиям (необязательно)...';
                 captionTa.addEventListener('input', (e) => {
                     item.text = e.target.value;
+                    scheduleTextPersist();
                 });
 
                 card.append(meta, chooseBtn, captionTa);
@@ -339,6 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isRecordingHotkey = false;
         recordHotkeyBtn.textContent = 'Записать';
         hotkeyHint.textContent = `Сохранена клавиша: ${parsed.label}`;
+        persistFlowConfig(`Клавиша ${parsed.label} сохранена ✅`);
     }, true);
 
     if (addTextBtn) {
@@ -349,6 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 text: ''
             });
             renderSteps();
+            persistFlowConfig('Блок текста добавлен ✅');
         });
     }
 
@@ -363,6 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 base64: null
             });
             renderSteps();
+            persistFlowConfig('Блок файла добавлен ✅');
         });
     }
 
@@ -375,6 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 text: ''
             });
             renderSteps();
+            persistFlowConfig('Блок «Фото с текстом» добавлен ✅');
         });
     }
 
@@ -409,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             images: loadedImages
                         };
                         renderSteps();
-                        editorStatus.textContent = `Загружено фото: ${loadedImages.length} шт. Нажмите «Сохранить сценарий».`;
+                        persistFlowConfig(`Фото (${loadedImages.length} шт.) сохранены ✅`);
                     }
                 } catch (e) {
                     editorStatus.textContent = 'Ошибка при чтении фотографий.';
@@ -436,7 +471,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         base64: reader.result
                     };
                     renderSteps();
-                    editorStatus.textContent = `Файл «${file.name}» добавлен. Нажмите «Сохранить сценарий».`;
+                    persistFlowConfig(`Файл «${file.name}» сохранён ✅`);
                 }
             };
             reader.onerror = () => {
@@ -448,17 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (saveFlowBtn) {
         saveFlowBtn.addEventListener('click', () => {
-            const payload = {
-                hotkeys: flowConfig.hotkeys,
-                flows: flowConfig.flows,
-                updatedAt: Date.now()
-            };
-            postToParent({
-                action: 'SAVE_CUSTOM_FLOW',
-                payload
-            });
-            editorStatus.textContent = 'Сценарий отправлен на сохранение ✅';
-            setTimeout(() => { editorStatus.textContent = ''; }, 2500);
+            persistFlowConfig('Сценарий сохранён ✅');
         });
     }
 
@@ -470,7 +495,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             hotkeyInput.value = flowConfig.hotkeys[currentFlowKey].label;
             renderSteps();
-            editorStatus.textContent = 'Сброшено к стандартному (не забудьте нажать «Сохранить сценарий»).';
+            persistFlowConfig('Сброшено к стандартному и сохранено ✅');
         });
     }
 
