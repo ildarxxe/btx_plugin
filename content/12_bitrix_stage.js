@@ -3,8 +3,64 @@
 // BITRIX: СМЕНА СТАДИИ (1 касание / 2 касание / 3 касание), модальное окно, «Сохранить»
 // =====================================================================================
 
+function triggerRealClick(el) {
+    if (!el) return;
+    try {
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+    } catch (e) {}
+
+    try {
+        if (typeof clickLikeUser === 'function') {
+            clickLikeUser(el);
+        }
+    } catch (e) {}
+
+    const rect = el.getBoundingClientRect();
+    const clientX = rect.left + rect.width / 2;
+    const clientY = rect.top + rect.height / 2;
+    const opts = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: el.ownerDocument.defaultView || window,
+        clientX,
+        clientY
+    };
+
+    try {
+        el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new PointerEvent('pointerup', opts));
+        el.dispatchEvent(new MouseEvent('mouseup', opts));
+        el.dispatchEvent(new MouseEvent('click', opts));
+    } catch (e) {}
+
+    try {
+        if (typeof el.click === 'function') {
+            el.click();
+        }
+    } catch (e) {}
+}
+
+function findStageButton(stageSelector) {
+    const all = findAllInAnyDocument(stageSelector);
+    if (!all.length) return null;
+    const visible = all.filter(isVisible);
+    return visible[0] || all[0];
+}
+
+async function waitForStageButton(stageSelector, timeout = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const btn = findStageButton(stageSelector);
+        if (btn) return btn;
+        await sleep(250);
+    }
+    return null;
+}
+
 async function moveCardToStage(stageKey) {
-    await sleep(1200);
+    await sleep(800);
 
     let stageSelector = SELECTORS.bitrix.stageTouch1;
     let stageName = '1 касание';
@@ -17,16 +73,29 @@ async function moveCardToStage(stageKey) {
         stageName = '2 касание';
     }
 
-    const stageBtn = await waitForElementAnyDoc(stageSelector, 8000);
+    const stageBtn = await waitForStageButton(stageSelector, 8000);
     if (!stageBtn) {
+        console.warn(`[Бот CRM] Не найдена кнопка статуса '${stageName}' (${stageSelector})`);
         showAlert(`Не найдена кнопка статуса '${stageName}' (селектор: ${stageSelector}).`);
         return false;
     }
 
     console.log(`[Бот CRM] Нажимаем кнопку стадии '${stageName}'...`);
-    clickLikeUser(stageBtn);
+    triggerRealClick(stageBtn);
+    await sleep(700);
 
-    const modalForm = await waitForElementAnyDoc(SELECTORS.bitrix.modalForm, 3500);
+    // Если модалка #progressbar-entity-editor или форма partial_editor_form не открылась — пробуем кликнуть ещё раз
+    let modalForm = findInAnyDocument(SELECTORS.bitrix.modalForm) || findInAnyDocument('#progressbar-entity-editor');
+    if (!modalForm) {
+        await sleep(600);
+        modalForm = findInAnyDocument(SELECTORS.bitrix.modalForm) || findInAnyDocument('#progressbar-entity-editor');
+    }
+    if (!modalForm) {
+        console.log(`[Бот CRM] Повторный клик по стадии '${stageName}'...`);
+        triggerRealClick(stageBtn);
+        modalForm = await waitForElementAnyDoc('#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm, 4000);
+    }
+
     if (modalForm) {
         await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
     } else if (stageKey === 'touch1') {
@@ -106,49 +175,38 @@ async function fillSourceFieldIfPresent() {
 }
 
 async function fillAndSubmitModalForm(opts = {}) {
-    const form0 = await waitForElementAnyDoc(SELECTORS.bitrix.modalForm, 12000);
+    const form0 = await waitForElementAnyDoc('#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm, 12000);
     if (!form0) {
         showAlert("Модальное окно смены статуса не появилось вовремя.");
         return;
     }
 
-    const anyFieldSelector = [
-        SELECTORS.bitrix.dateInput,
-        SELECTORS.bitrix.categorySelect,
-        SELECTORS.bitrix.clientTypeSelect,
-        SELECTORS.bitrix.sourceBlock
-    ].join(', ');
-    const anyField = await waitForModalField(anyFieldSelector, 12000);
-    if (!anyField) {
-        showAlert("Модалка появилась, но поля в ней не загрузились.");
-        return;
-    }
-    await sleep(800);
+    await sleep(600);
 
-    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, 2000);
+    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, 1500);
     if (dateInput) {
         dateInput.value = getFormattedTodayDate();
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
         dateInput.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, 1200);
+    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, 1000);
     if (categoryFresh) {
         await selectDropdownOption(categoryFresh, "Уличные елки");
     }
 
-    const qualEl = await waitForModalField('[data-name="UF_CRM_1782716466581"]', 1500);
+    const qualEl = await waitForModalField('[data-name="UF_CRM_1782716466581"]', 2000);
     if (qualEl) {
         await selectDropdownOption(qualEl, "CCC");
     }
 
-    const clientTypeEl = await waitForModalField('[data-name="UF_CRM_1782799322263"]', 1200);
+    const clientTypeEl = await waitForModalField('[data-name="UF_CRM_1782799322263"]', 1000);
     if (clientTypeEl) {
         await selectDropdownOption(clientTypeEl, "B2C");
     }
 
     await fillSourceFieldIfPresent();
-    await sleep(700);
+    await sleep(600);
 
     const form = findInAnyDocument(SELECTORS.bitrix.modalForm) || form0;
     const saveBtn = findSaveButton(form);
@@ -157,7 +215,7 @@ async function fillAndSubmitModalForm(opts = {}) {
         return;
     }
 
-    clickLikeUser(saveBtn);
+    triggerRealClick(saveBtn);
     await sleep(1800);
 
     if (!opts.skipNextStep) {
@@ -195,7 +253,7 @@ async function selectDropdownOption(container, optionText) {
         return;
     }
 
-    clickLikeUser(container);
+    triggerRealClick(container);
     await sleep(500);
 
     const items = findAllInAnyDocument('.main-ui-select-item, .menu-popup-item, .popup-window-item');
@@ -203,7 +261,7 @@ async function selectDropdownOption(container, optionText) {
         || items.find(item => isVisible(item) && (item.innerText || '').toLowerCase().includes(wanted));
 
     if (target) {
-        clickLikeUser(target);
+        triggerRealClick(target);
         await sleep(400);
         return;
     }

@@ -344,12 +344,16 @@ async function processNextCard() {
 
     try {
         await sendSavedFlowInBitrixChat('touch1');
-        await sleep(1200);
+        await sleep(1000);
         if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-        await closeChatAndCard();
-        await ensureCardOpen(cardId);
-        await moveCardToStage('touch3');
+        // Закрываем только окно чата (один Escape), не закрывая саму карточку сделки
+        pressEscapeEverywhere();
+        await sleep(800);
+
+        const moved = await moveCardToStage('touch3');
+        if (!moved) return;
+
         await addHandledCardId(cardId);
         await returnToCRMAndEscape();
         processNextCard();
