@@ -1,6 +1,6 @@
 // =====================================================================================
 // МОДУЛЬ 12_bitrix_stage.js
-// BITRIX: СМЕНА СТАДИИ (1 касание / 3 касание), модальное окно, «Сохранить»
+// BITRIX: СМЕНА СТАДИИ (1 касание / 2 касание / 3 касание), модальное окно, «Сохранить»
 // =====================================================================================
 
 async function moveCardToStage(stageKey) {
@@ -8,16 +8,13 @@ async function moveCardToStage(stageKey) {
 
     let stageSelector = SELECTORS.bitrix.stageTouch1;
     let stageName = '1 касание';
-    let needsModal = true;
 
     if (stageKey === 'touch3') {
         stageSelector = SELECTORS.bitrix.stageTouch3;
         stageName = '3 касание';
-        needsModal = false;
     } else if (stageKey === 'touch2') {
         stageSelector = SELECTORS.bitrix.stageTouch2;
         stageName = '2 касание';
-        needsModal = false;
     }
 
     const stageBtn = await waitForElementAnyDoc(stageSelector, 8000);
@@ -29,8 +26,11 @@ async function moveCardToStage(stageKey) {
     console.log(`[Бот CRM] Нажимаем кнопку стадии '${stageName}'...`);
     clickLikeUser(stageBtn);
 
-    if (needsModal) {
-        await fillAndSubmitModalForm({ skipNextStep: true });
+    const modalForm = await waitForElementAnyDoc(SELECTORS.bitrix.modalForm, 3500);
+    if (modalForm) {
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
+    } else if (stageKey === 'touch1') {
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
     } else {
         await sleep(1500);
     }
@@ -125,19 +125,24 @@ async function fillAndSubmitModalForm(opts = {}) {
     }
     await sleep(800);
 
-    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, 3000);
+    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, 2000);
     if (dateInput) {
         dateInput.value = getFormattedTodayDate();
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
         dateInput.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, 1500);
+    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, 1200);
     if (categoryFresh) {
         await selectDropdownOption(categoryFresh, "Уличные елки");
     }
 
-    const clientTypeEl = await waitForModalField(SELECTORS.bitrix.clientTypeSelect, 1500);
+    const qualEl = await waitForModalField('[data-name="UF_CRM_1782716466581"]', 1500);
+    if (qualEl) {
+        await selectDropdownOption(qualEl, "CCC");
+    }
+
+    const clientTypeEl = await waitForModalField('[data-name="UF_CRM_1782799322263"]', 1200);
     if (clientTypeEl) {
         await selectDropdownOption(clientTypeEl, "B2C");
     }
@@ -163,30 +168,73 @@ async function fillAndSubmitModalForm(opts = {}) {
 }
 
 function findSaveButton(form) {
-    let btn = form.querySelector(SELECTORS.bitrix.saveButton);
-    if (btn) return btn;
+    const popup = (form && form.closest('#progressbar-entity-editor, .popup-window, .bx-core-popup-container, .ui-sidepanel-layout, .main-ui-popup'))
+        || findInAnyDocument('#progressbar-entity-editor');
 
-    const popup = form.closest('.popup-window, .bx-core-popup-container, .ui-sidepanel-layout, .main-ui-popup');
     if (popup) {
-        btn = popup.querySelector(SELECTORS.bitrix.saveButton);
+        const popupSave = popup.querySelector('.crm-entity-popup-fill-required-fields-btns .ui-btn.ui-btn-primary, .ui-btn.ui-btn-primary');
+        if (popupSave) return popupSave;
+    }
+
+    if (form) {
+        const btn = form.querySelector(SELECTORS.bitrix.saveButton);
         if (btn) return btn;
     }
 
-    const doc = form.ownerDocument;
+    const doc = (form && form.ownerDocument) || document;
     const candidates = Array.from(doc.querySelectorAll('button, a.ui-btn, span.ui-btn, .ui-btn'));
     return candidates.find(b => /^(сохранить|save)$/i.test((b.innerText || '').trim())) || null;
 }
 
 async function selectDropdownOption(container, optionText) {
     if (!container) return;
-    clickLikeUser(container);
-    await sleep(600);
+    const wanted = (optionText || '').trim().toLowerCase();
 
-    const items = findAllInAnyDocument('.main-ui-select-item, .menu-popup-item');
-    const wanted = optionText.toLowerCase();
-    const target = items.find(item => (item.innerText || '').toLowerCase().includes(wanted));
+    const currentLabel = container.querySelector('.main-ui-select-name');
+    if (currentLabel && (currentLabel.innerText || '').trim().toLowerCase() === wanted) {
+        return;
+    }
+
+    clickLikeUser(container);
+    await sleep(500);
+
+    const items = findAllInAnyDocument('.main-ui-select-item, .menu-popup-item, .popup-window-item');
+    const target = items.find(item => isVisible(item) && (item.innerText || '').trim().toLowerCase() === wanted)
+        || items.find(item => isVisible(item) && (item.innerText || '').toLowerCase().includes(wanted));
+
     if (target) {
         clickLikeUser(target);
+        await sleep(400);
+        return;
     }
-    await sleep(400);
+
+    try {
+        const rawItems = container.getAttribute('data-items');
+        if (rawItems) {
+            const parsed = JSON.parse(rawItems.replace(/&quot;/g, '"'));
+            const matched = Array.isArray(parsed)
+                ? parsed.find(x => String(x.NAME || '').trim().toLowerCase() === wanted || String(x.NAME || '').toLowerCase().includes(wanted))
+                : null;
+            if (matched) {
+                parsed.forEach(x => { x.IS_SELECTED = (x === matched); });
+                container.setAttribute('data-items', JSON.stringify(parsed));
+                container.setAttribute('data-value', JSON.stringify({ NAME: matched.NAME, VALUE: matched.VALUE }));
+                if (currentLabel) currentLabel.textContent = matched.NAME;
+
+                const fieldName = container.getAttribute('data-name');
+                const hiddenInput = fieldName
+                    ? findInAnyDocument(`input[type="hidden"][name="${fieldName}"]`)
+                    : null;
+                if (hiddenInput) {
+                    hiddenInput.value = matched.VALUE;
+                    hiddenInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                container.dispatchEvent(new Event('change', { bubbles: true }));
+                await sleep(300);
+            }
+        }
+    } catch (e) {
+        console.warn('[Бот CRM] Не удалось обновить data-items вручную:', e);
+    }
 }

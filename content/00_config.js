@@ -97,7 +97,7 @@ const SELECTORS = {
         modalForm: 'form[name*="partial_editor_form"]',
         dateInput: 'input[name="UF_CRM_1782717007483"]',
         categorySelect: '[data-name="UF_CRM_1782717199942"]',
-        clientTypeSelect: '[data-name="UF_CRM_1782799322263"]',
+        clientTypeSelect: '[data-name="UF_CRM_1782716466581"], [data-name="UF_CRM_1782799322263"]',
         sourceBlock: '[data-cid="SOURCE_ID"]',
         sourceSelect: '[data-cid="SOURCE_ID"] .ui-ctl-dropdown',
         messengerOpened: '[data-testid="im-message-list"], .bx-im-content-chat__dialog_container',
