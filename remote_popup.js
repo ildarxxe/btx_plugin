@@ -1,6 +1,17 @@
-document.addEventListener('DOMContentLoaded', async () => {
-    const STORAGE_KEY_FLOW = 'elki_custom_flow_v1';
+window.addEventListener('error', (event) => {
+    console.error('[Popup Error]', event.message, event.filename, event.lineno);
+    const st = document.getElementById('statusText');
+    if (st) {
+        st.textContent = 'Ошибка попапа: ' + event.message;
+        st.style.color = '#d9363e';
+    }
+});
 
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('[Popup Promise Rejection]', event.reason);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
     const DEFAULT_HOTKEYS = {
         firstTouch: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Enter', label: 'Ctrl+Alt+Enter' },
         touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' }
@@ -17,7 +28,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         ]
     };
 
-    // Элементы навигации и экранов
     const views = {
         home: document.getElementById('view-home'),
         choose: document.getElementById('view-choose-type'),
@@ -66,8 +76,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function showView(name) {
         isRecordingHotkey = false;
-        recordHotkeyBtn.textContent = 'Записать';
-        Object.values(views).forEach(v => v.classList.remove('active'));
+        if (recordHotkeyBtn) recordHotkeyBtn.textContent = 'Записать';
+        Object.values(views).forEach(v => {
+            if (v) v.classList.remove('active');
+        });
         if (views[name]) views[name].classList.add('active');
     }
 
@@ -76,23 +88,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.parent.postMessage({ source: 'BTX_REMOTE_POPUP', payload }, '*');
         } catch (e) {
             console.error('[Popup] Ошибка postMessage:', e);
-        }
-    }
-
-    async function loadInitialState() {
-        if (chrome && chrome.storage && chrome.storage.local) {
-            try {
-                const saved = await chrome.storage.local.get(['runMode', 'useTestPhone', 'testPhone', STORAGE_KEY_FLOW]);
-                if (saved.runMode) modeSelect.value = saved.runMode;
-                if (typeof saved.useTestPhone === 'boolean') testModeCheck.checked = saved.useTestPhone;
-                if (saved.testPhone) testPhoneInput.value = saved.testPhone;
-
-                if (saved[STORAGE_KEY_FLOW]) {
-                    mergeFlowConfig(saved[STORAGE_KEY_FLOW]);
-                }
-            } catch (e) {
-                console.warn('[Popup] Не удалось прочитать chrome.storage.local (возможно, нет прямого доступа из iframe):', e);
-            }
         }
     }
 
@@ -118,6 +113,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
     }
 
+    function applyLoadedState(state) {
+        if (!state || typeof state !== 'object') return;
+        if (state.runMode && modeSelect) modeSelect.value = state.runMode;
+        if (typeof state.useTestPhone === 'boolean' && testModeCheck) testModeCheck.checked = state.useTestPhone;
+        if (state.testPhone && testPhoneInput) testPhoneInput.value = state.testPhone;
+        if (state.customFlow) {
+            mergeFlowConfig(state.customFlow);
+            if (views.editor && views.editor.classList.contains('active')) {
+                const hk = flowConfig.hotkeys[currentFlowKey] || DEFAULT_HOTKEYS[currentFlowKey];
+                hotkeyInput.value = hk.label || '';
+                renderSteps();
+            }
+        }
+    }
+
+    window.addEventListener('message', (event) => {
+        const msg = event.data;
+        if (!msg || typeof msg !== 'object' || msg.source !== 'BTX_POPUP_HOST') return;
+        if (msg.action === 'POPUP_STATE_LOADED') {
+            applyLoadedState(msg.payload);
+        }
+    });
+
     function formatHotkeyEvent(e) {
         const parts = [];
         if (e.ctrlKey) parts.push('Ctrl');
@@ -125,7 +143,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.shiftKey) parts.push('Shift');
         if (e.metaKey) parts.push('Meta');
 
-        const ignoredCodes = new Set(['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight']);
+        const ignoredCodes = new Set([
+            'ControlLeft', 'ControlRight',
+            'AltLeft', 'AltRight',
+            'ShiftLeft', 'ShiftRight',
+            'MetaLeft', 'MetaRight'
+        ]);
         if (ignoredCodes.has(e.code)) return null;
 
         let keyName = e.code || e.key;
@@ -252,21 +275,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         showView('editor');
     }
 
-    // Навигация
-    openEditMenuBtn.addEventListener('click', () => showView('choose'));
-    backToHomeBtn.addEventListener('click', () => showView('home'));
-    pickFirstTouchBtn.addEventListener('click', () => openEditor('firstTouch'));
-    pickTouch1Btn.addEventListener('click', () => openEditor('touch1'));
-    backToChooseBtn.addEventListener('click', () => showView('choose'));
+    if (openEditMenuBtn) openEditMenuBtn.addEventListener('click', () => showView('choose'));
+    if (backToHomeBtn) backToHomeBtn.addEventListener('click', () => showView('home'));
+    if (pickFirstTouchBtn) pickFirstTouchBtn.addEventListener('click', () => openEditor('firstTouch'));
+    if (pickTouch1Btn) pickTouch1Btn.addEventListener('click', () => openEditor('touch1'));
+    if (backToChooseBtn) backToChooseBtn.addEventListener('click', () => showView('choose'));
 
-    // Запись комбинации клавиш
-    recordHotkeyBtn.addEventListener('click', () => {
-        isRecordingHotkey = !isRecordingHotkey;
-        recordHotkeyBtn.textContent = isRecordingHotkey ? 'Нажмите...' : 'Записать';
-        hotkeyHint.textContent = isRecordingHotkey
-            ? 'Нажмите комбинацию клавиш (например, Ctrl+Alt+2)...'
-            : 'Нажмите «Записать», затем нужную комбинацию.';
-    });
+    if (recordHotkeyBtn) {
+        recordHotkeyBtn.addEventListener('click', () => {
+            isRecordingHotkey = !isRecordingHotkey;
+            recordHotkeyBtn.textContent = isRecordingHotkey ? 'Нажмите...' : 'Записать';
+            hotkeyHint.textContent = isRecordingHotkey
+                ? 'Нажмите комбинацию клавиш (например, Ctrl+Alt+2)...'
+                : 'Нажмите «Записать», затем нужную комбинацию.';
+        });
+    }
 
     window.addEventListener('keydown', (e) => {
         if (!isRecordingHotkey) return;
@@ -281,132 +304,122 @@ document.addEventListener('DOMContentLoaded', async () => {
         hotkeyHint.textContent = `Сохранена клавиша: ${parsed.label}`;
     }, true);
 
-    // Добавление шагов
-    addTextBtn.addEventListener('click', () => {
-        getActiveItems().push({
-            id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            type: 'text',
-            text: ''
+    if (addTextBtn) {
+        addTextBtn.addEventListener('click', () => {
+            getActiveItems().push({
+                id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                type: 'text',
+                text: ''
+            });
+            renderSteps();
         });
-        renderSteps();
-    });
+    }
 
-    addFileBtn.addEventListener('click', () => {
-        getActiveItems().push({
-            id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            type: 'file',
-            fileId: null,
-            fileName: null,
-            mimeType: null,
-            base64: null
+    if (addFileBtn) {
+        addFileBtn.addEventListener('click', () => {
+            getActiveItems().push({
+                id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                type: 'file',
+                fileId: null,
+                fileName: null,
+                mimeType: null,
+                base64: null
+            });
+            renderSteps();
         });
-        renderSteps();
-    });
+    }
 
-    // Чтение выбранного файла через FileReader (без ограничений по размеру)
-    editorFileInput.addEventListener('change', () => {
-        const file = editorFileInput.files && editorFileInput.files[0];
-        if (!file || pendingFileTargetIndex === null) return;
+    if (editorFileInput) {
+        editorFileInput.addEventListener('change', () => {
+            const file = editorFileInput.files && editorFileInput.files[0];
+            if (!file || pendingFileTargetIndex === null) return;
 
-        const targetIdx = pendingFileTargetIndex;
-        pendingFileTargetIndex = null;
-        editorStatus.textContent = `Читаю файл ${file.name}...`;
+            const targetIdx = pendingFileTargetIndex;
+            pendingFileTargetIndex = null;
+            editorStatus.textContent = `Читаю файл ${file.name}...`;
 
-        const reader = new FileReader();
-        reader.onload = () => {
-            const items = getActiveItems();
-            if (items[targetIdx]) {
-                items[targetIdx] = {
-                    ...items[targetIdx],
-                    type: 'file',
-                    fileId: 'custom_' + Date.now(),
-                    fileName: file.name,
-                    mimeType: file.type || 'application/octet-stream',
-                    base64: reader.result
-                };
-                renderSteps();
-                editorStatus.textContent = `Файл «${file.name}» добавлен. Нажмите «Сохранить сценарий».`;
-            }
-        };
-        reader.onerror = () => {
-            editorStatus.textContent = 'Ошибка при чтении файла.';
-        };
-        reader.readAsDataURL(file);
-    });
-
-    // Сохранение сценария и отправка в расширение / Tampermonkey
-    saveFlowBtn.addEventListener('click', async () => {
-        const payload = {
-            hotkeys: flowConfig.hotkeys,
-            flows: flowConfig.flows,
-            updatedAt: Date.now()
-        };
-
-        if (chrome && chrome.storage && chrome.storage.local) {
-            try {
-                await chrome.storage.local.set({ [STORAGE_KEY_FLOW]: payload });
-            } catch (e) {
-                console.warn('[Popup] Файл/конфиг не поместился в chrome.storage.local (вероятно, большой размер), отправляем через мост в TM:', e);
-            }
-        }
-
-        postToParent({
-            action: 'SAVE_CUSTOM_FLOW',
-            payload
+            const reader = new FileReader();
+            reader.onload = () => {
+                const items = getActiveItems();
+                if (items[targetIdx]) {
+                    items[targetIdx] = {
+                        ...items[targetIdx],
+                        type: 'file',
+                        fileId: 'custom_' + Date.now(),
+                        fileName: file.name,
+                        mimeType: file.type || 'application/octet-stream',
+                        base64: reader.result
+                    };
+                    renderSteps();
+                    editorStatus.textContent = `Файл «${file.name}» добавлен. Нажмите «Сохранить сценарий».`;
+                }
+            };
+            reader.onerror = () => {
+                editorStatus.textContent = 'Ошибка при чтении файла.';
+            };
+            reader.readAsDataURL(file);
         });
+    }
 
-        editorStatus.textContent = 'Сценарий сохранён ✅';
-        setTimeout(() => { editorStatus.textContent = ''; }, 2500);
-    });
-
-    resetFlowBtn.addEventListener('click', () => {
-        flowConfig.hotkeys[currentFlowKey] = { ...DEFAULT_HOTKEYS[currentFlowKey] };
-        flowConfig.flows[currentFlowKey] = {
-            items: DEFAULT_ITEMS[currentFlowKey].map(x => ({ ...x }))
-        };
-        hotkeyInput.value = flowConfig.hotkeys[currentFlowKey].label;
-        renderSteps();
-        editorStatus.textContent = 'Сброшено к стандартному (не забудьте нажать «Сохранить сценарий»).';
-    });
-
-    // Кнопка СТАРТ на главной
-    startBtn.addEventListener('click', async () => {
-        const config = {
-            runMode: modeSelect.value,
-            useTestPhone: testModeCheck.checked,
-            testPhone: testPhoneInput.value.trim(),
-            isPaused: false
-        };
-
-        if (chrome && chrome.storage && chrome.storage.local) {
-            try { await chrome.storage.local.set(config); } catch (e) {}
-        }
-
-        statusText.innerText = 'Запуск скрипта в Битриксе...';
-        statusText.style.color = '#1ebe5d';
-
-        postToParent({
-            action: 'FORWARD_TO_TAB',
-            payload: { action: 'START_BOT', config }
+    if (saveFlowBtn) {
+        saveFlowBtn.addEventListener('click', () => {
+            const payload = {
+                hotkeys: flowConfig.hotkeys,
+                flows: flowConfig.flows,
+                updatedAt: Date.now()
+            };
+            postToParent({
+                action: 'SAVE_CUSTOM_FLOW',
+                payload
+            });
+            editorStatus.textContent = 'Сценарий отправлен на сохранение ✅';
+            setTimeout(() => { editorStatus.textContent = ''; }, 2500);
         });
+    }
 
-        statusText.innerText = 'Команда отправлена. Не закрывайте вкладки.';
-    });
-
-    // Кнопка СТОП на главной
-    stopBtn.addEventListener('click', async () => {
-        if (chrome && chrome.storage && chrome.storage.local) {
-            try { await chrome.storage.local.set({ isPaused: true, botState: null }); } catch (e) {}
-        }
-
-        statusText.innerText = 'Остановлено пользователем.';
-        statusText.style.color = '#ff4d4f';
-
-        postToParent({
-            action: 'FORWARD_TO_TAB',
-            payload: { action: 'STOP_BOT' }
+    if (resetFlowBtn) {
+        resetFlowBtn.addEventListener('click', () => {
+            flowConfig.hotkeys[currentFlowKey] = { ...DEFAULT_HOTKEYS[currentFlowKey] };
+            flowConfig.flows[currentFlowKey] = {
+                items: DEFAULT_ITEMS[currentFlowKey].map(x => ({ ...x }))
+            };
+            hotkeyInput.value = flowConfig.hotkeys[currentFlowKey].label;
+            renderSteps();
+            editorStatus.textContent = 'Сброшено к стандартному (не забудьте нажать «Сохранить сценарий»).';
         });
-    });
+    }
 
-    await loadInitialState();
+    if (startBtn) {
+        startBtn.addEventListener('click', () => {
+            const config = {
+                runMode: modeSelect.value,
+                useTestPhone: testModeCheck.checked,
+                testPhone: testPhoneInput.value.trim(),
+                isPaused: false
+            };
+
+            statusText.innerText = 'Запуск скрипта в Битриксе...';
+            statusText.style.color = '#1ebe5d';
+
+            postToParent({
+                action: 'SAVE_RUN_CONFIG_AND_START',
+                config
+            });
+
+            statusText.innerText = 'Команда отправлена. Не закрывайте вкладки.';
+        });
+    }
+
+    if (stopBtn) {
+        stopBtn.addEventListener('click', () => {
+            statusText.innerText = 'Остановлено пользователем.';
+            statusText.style.color = '#ff4d4f';
+
+            postToParent({
+                action: 'STOP_BOT_FROM_POPUP'
+            });
+        });
+    }
+
+    postToParent({ action: 'LOAD_POPUP_STATE' });
 });

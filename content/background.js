@@ -1,14 +1,15 @@
 // ==========================================
-// BACKGROUND: связь между Bitrix24 и WhatsApp Web (для Tampermonkey)
+// BACKGROUND: связь между Bitrix24, попапом и WhatsApp Web (для Tampermonkey)
 // ==========================================
 
-// Вспомогательная функция: доставляет сообщение на страницу, где работает Tampermonkey
+const CUSTOM_FLOW_KEY = "elki_custom_flow_v1";
+
 async function sendToTampermonkey(tabId, payload) {
     try {
         await chrome.scripting.executeScript({
             target: { tabId: tabId },
             func: (msg) => {
-                window.postMessage({ source: 'BTX_EXT_BG', ...msg }, '*');
+                window.postMessage({ source: "BTX_EXT_BG", ...msg }, "*");
             },
             args: [payload]
         });
@@ -17,37 +18,101 @@ async function sendToTampermonkey(tabId, payload) {
     }
 }
 
-// Слушаем сообщения от popup_loader.js (переходник от страницы и iframe)
+async function broadcastToBitrixTabs(payload) {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        if (tab.url && tab.url.includes("bitrix24")) {
+            await sendToTampermonkey(tab.id, payload);
+        }
+    }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (!request || typeof request !== "object") return false;
+
+    if (request.action === "GET_POPUP_STATE") {
+        (async () => {
+            try {
+                const stored = await chrome.storage.local.get(["runMode", "useTestPhone", "testPhone", CUSTOM_FLOW_KEY]);
+                sendResponse({
+                    ok: true,
+                    state: {
+                        runMode: stored.runMode || "new",
+                        useTestPhone: typeof stored.useTestPhone === "boolean" ? stored.useTestPhone : false,
+                        testPhone: stored.testPhone || "87781193946",
+                        customFlow: stored[CUSTOM_FLOW_KEY] || null
+                    }
+                });
+            } catch (e) {
+                console.error("[BG] Ошибка GET_POPUP_STATE:", e);
+                sendResponse({ ok: false });
+            }
+        })();
+        return true;
+    }
+
+    if (request.action === "SAVE_CUSTOM_FLOW") {
+        (async () => {
+            try {
+                await chrome.storage.local.set({ [CUSTOM_FLOW_KEY]: request.payload });
+            } catch (e) {
+                console.warn("[BG] Не удалось сохранить в chrome.storage.local (возможно, большой файл), передаём напрямую в TM:", e);
+            }
+            await broadcastToBitrixTabs({
+                action: "SAVE_CUSTOM_FLOW_TO_TM",
+                payload: request.payload
+            });
+            if (sendResponse) sendResponse({ ok: true });
+        })();
+        return true;
+    }
+
+    if (request.action === "SAVE_RUN_CONFIG_AND_START") {
+        (async () => {
+            const cfg = request.config || {};
+            try {
+                await chrome.storage.local.set({
+                    runMode: cfg.runMode,
+                    useTestPhone: cfg.useTestPhone,
+                    testPhone: cfg.testPhone,
+                    isPaused: false
+                });
+            } catch (e) {}
+
+            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (activeTab && activeTab.id) {
+                await sendToTampermonkey(activeTab.id, { action: "START_BOT", config: cfg });
+            }
+            if (sendResponse) sendResponse({ ok: true });
+        })();
+        return true;
+    }
+
+    if (request.action === "STOP_BOT_FROM_POPUP") {
+        (async () => {
+            try {
+                await chrome.storage.local.set({ isPaused: true, botState: null });
+            } catch (e) {}
+            await broadcastToBitrixTabs({ action: "STOP_BOT" });
+            if (sendResponse) sendResponse({ ok: true });
+        })();
+        return true;
+    }
+
     if (request.action === "openWhatsAppAndSearch") {
         const bitrixTabId = sender.tab ? sender.tab.id : null;
         handleWhatsAppTransition(request.data, bitrixTabId);
     } else if (request.action === "returnToBitrix") {
         handleBitrixReturn(request.stageType);
     } else if (request.action === "FORWARD_TO_TAB") {
-        // Команды от popup (Старт / Стоп)
         (async () => {
             const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (activeTab) {
                 await sendToTampermonkey(activeTab.id, request.payload);
             }
         })();
-    } else if (request.action === "SAVE_CUSTOM_FLOW") {
-        (async () => {
-            await chrome.storage.local.set({ elki_custom_flow_v1: request.payload });
-            const tabs = await chrome.tabs.query({});
-            for (const tab of tabs) {
-                if (tab.url && tab.url.includes("bitrix24")) {
-                    await sendToTampermonkey(tab.id, {
-                        action: "CUSTOM_FLOW_UPDATED",
-                        payload: request.payload
-                    });
-                }
-            }
-            if (sendResponse) sendResponse({ ok: true });
-        })();
-        return true;
     }
+
     return false;
 });
 
@@ -74,7 +139,7 @@ async function handleWhatsAppTransition(data, bitrixTabId) {
 
 async function handleBitrixReturn(stageType) {
     try {
-        const stored = await chrome.storage.local.get(['bitrixTabId']);
+        const stored = await chrome.storage.local.get(["bitrixTabId"]);
         let bitrixTab = null;
 
         if (stored.bitrixTabId) {
