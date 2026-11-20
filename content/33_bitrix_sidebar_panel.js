@@ -13,8 +13,32 @@
     const TOGGLE_ID = 'elki-sidebar-toggle-btn';
     const DRAWER_ID = 'elki-sidebar-drawer';
     const FRAME_ID = 'elki-sidebar-frame';
+    const RUN_MODE_KEY = 'btx_run_mode';
 
     let isOpen = false;
+
+    function readSavedRunMode() {
+        try {
+            if (typeof GM_getValue === 'function') {
+                const v = GM_getValue(RUN_MODE_KEY);
+                if (v === 'new' || v === 'touch1') return v;
+            }
+        } catch (e) {}
+        return BOT_CONFIG.runMode || 'new';
+    }
+
+    function writeSavedRunMode(mode) {
+        if (mode !== 'new' && mode !== 'touch1') return;
+        BOT_CONFIG.runMode = mode;
+        try {
+            if (typeof GM_setValue === 'function') {
+                GM_setValue(RUN_MODE_KEY, mode);
+            }
+        } catch (e) {}
+        try {
+            chrome.storage.local.set({ runMode: mode });
+        } catch (e) {}
+    }
 
     function createSidebarUI() {
         if (document.getElementById(TOGGLE_ID)) return;
@@ -132,8 +156,11 @@
         if (!iframe || !iframe.contentWindow) return;
 
         await loadCustomFlowState();
+        const savedMode = readSavedRunMode();
+        BOT_CONFIG.runMode = savedMode;
+
         const statePayload = {
-            runMode: BOT_CONFIG.runMode || 'new',
+            runMode: savedMode,
             useTestPhone: Boolean(BOT_CONFIG.useTestPhone),
             testPhone: BOT_CONFIG.testPhone || '87781193946',
             customFlow: customFlowState
@@ -162,7 +189,6 @@
                 drawer.style.pointerEvents = 'none';
                 drawer.style.visibility = 'hidden';
                 drawer.style.display = 'none';
-                // Принудительный reflow, чтобы в Firefox не оставался "фантомный" слой
                 void drawer.offsetHeight;
             }
         }
@@ -182,6 +208,7 @@
             }
         }
     }
+
     // Принимаем команды из встроенного iframe панели на странице Bitrix24
     window.addEventListener('message', async (event) => {
         const data = event.data;
@@ -191,6 +218,14 @@
 
         if (payload.action === 'LOAD_POPUP_STATE') {
             await sendStateToDrawerFrame();
+            return;
+        }
+
+        if (payload.action === 'SAVE_RUN_CONFIG' && payload.config) {
+            if (payload.config.runMode) {
+                writeSavedRunMode(payload.config.runMode);
+            }
+            BOT_CONFIG = { ...BOT_CONFIG, ...payload.config };
             return;
         }
 
@@ -207,6 +242,9 @@
         }
 
         if (payload.action === 'SAVE_RUN_CONFIG_AND_START' && payload.config) {
+            if (payload.config.runMode) {
+                writeSavedRunMode(payload.config.runMode);
+            }
             BOT_CONFIG = { ...BOT_CONFIG, ...payload.config, isPaused: false };
             cardAttempts = {};
             startAutomation();
@@ -217,6 +255,9 @@
             stopBot('кнопка СТОП в панели');
         }
     });
+
+    // Сразу при загрузке страницы Bitrix24 подтягиваем сохранённую колонку
+    BOT_CONFIG.runMode = readSavedRunMode();
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', createSidebarUI, { once: true });

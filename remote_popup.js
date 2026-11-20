@@ -531,5 +531,45 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function persistRunConfig(extra = {}) {
+        const config = {
+            runMode: modeSelect ? modeSelect.value : 'new',
+            useTestPhone: testModeCheck ? Boolean(testModeCheck.checked) : false,
+            testPhone: testPhoneInput ? testPhoneInput.value.trim() : '87781193946',
+            ...extra
+        };
+        postToParent({
+            action: 'SAVE_RUN_CONFIG',
+            config
+        });
+        return config;
+    }
+
+    if (modeSelect) {
+        modeSelect.addEventListener('change', () => {
+            persistRunConfig();
+            if (statusText) {
+                statusText.textContent = `Выбрана колонка: ${modeSelect.value === 'touch1' ? '1 касание' : 'Новая'}`;
+                statusText.style.color = '#1ebe5d';
+            }
+        });
+    }
+
+    if (startBtn) {
+        startBtn.addEventListener('click', () => {
+            const config = persistRunConfig({ isPaused: false });
+
+            statusText.innerText = 'Запуск скрипта в Битриксе...';
+            statusText.style.color = '#1ebe5d';
+
+            postToParent({
+                action: 'SAVE_RUN_CONFIG_AND_START',
+                config
+            });
+
+            statusText.innerText = 'Команда отправлена. Не закрывайте вкладки.';
+        });
+    }
+
     postToParent({ action: 'LOAD_POPUP_STATE' });
 });
