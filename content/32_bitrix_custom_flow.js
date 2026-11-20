@@ -1,11 +1,6 @@
 // =====================================================================================
 // МОДУЛЬ 32_bitrix_custom_flow.js
-// BITRIX-ЧАТ: НАСТРАИВАЕМЫЕ СЦЕНАРИИ (1-е сообщения / 1-е касание), ФАЙЛЫ И ГОРЯЧИЕ КЛАВИШИ
-//
-// Все модули — один общий контекст расширения: функции и константы из других модулей доступны напрямую.
-// Содержит: loadCustomFlowState, saveFlowToTmStorage, readFlowFromTmStorage, findUploadedFileById,
-//           ensureBitrixChatReadyForFlow, executeFlowStep, runBitrixFlow, matchesHotkey,
-//           onCustomBitrixHotkey, attachCustomBitrixHotkeys
+// BITRIX-ЧАТ: НАСТРАИВАЕМЫЕ СЦЕНАРИИ (1-е сообщения / 1-е касание), ФАЙЛЫ, АЛЬБОМЫ ФОТО И ГОРЯЧИЕ КЛАВИШИ
 // =====================================================================================
 
 let customFlowState = {
@@ -67,14 +62,12 @@ function applySavedFlowObject(saved) {
 }
 
 async function loadCustomFlowState() {
-    // 1. Сначала пробуем прочитать из хранилища Tampermonkey (без жёстких лимитов на размер файлов)
     const tmSaved = readFlowFromTmStorage();
     if (tmSaved) {
         applySavedFlowObject(tmSaved);
         return customFlowState;
     }
 
-    // 2. Фолбэк на chrome.storage.local
     try {
         const res = await chrome.storage.local.get([CUSTOM_FLOW_STORAGE_KEY]);
         const extSaved = res && res[CUSTOM_FLOW_STORAGE_KEY];
@@ -96,7 +89,7 @@ function buildFilePayloadFromStep(step) {
             base64: step.base64
         };
     }
-    return null; // null -> loadPriceFileDataTransfer возьмёт стандартный price.pdf с GitHub
+    return null;
 }
 
 function ensureBitrixChatReadyForFlow() {
@@ -136,13 +129,11 @@ async function runBitrixFlow(flowKey) {
     bitrixChatSending = true;
 
     try {
-        // Заранее готовим DataTransfer для всех файловых шагов (свои файлы или дефолтный price.pdf)
         const preparedFiles = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (item && item.type === 'file') {
-                const fileObj = buildFilePayloadFromStep(item);
-                preparedFiles[i] = await loadPriceFileDataTransfer(fileObj);
+                preparedFiles[i] = await loadPriceFileDataTransfer(buildFilePayloadFromStep(item));
             }
         }
 
@@ -163,11 +154,14 @@ async function runBitrixFlow(flowKey) {
                 const labelName = item.fileName || 'price.pdf';
                 showBotToast(`Шаг ${i + 1}/${items.length}: отправляю файл ${labelName}…`);
                 await sendBitrixChatFile(preparedFiles[i]);
+            } else if (item.type === 'images_with_text') {
+                const imgs = Array.isArray(item.images) ? item.images : [];
+                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю фото (${imgs.length} шт.) с текстом…`);
+                await sendBitrixChatImagesWithText(imgs, item.text || '');
             }
         }
 
         showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
-        console.log(`[Бот Bitrix] Сценарий '${flowKey}' успешно выполнен.`);
     } catch (e) {
         console.error("[Бот Bitrix] Ошибка выполнения сценария:", e);
         showBotToast("Ошибка: " + (e && e.message ? e.message : e), true);

@@ -1,12 +1,8 @@
 // =====================================================================================
 // МОДУЛЬ 30_bitrix_chat_sender.js
-// BITRIX-ЧАТ: ОТПРАВКА ПЕРВЫХ СООБЩЕНИЙ И ФАЙЛА ПО КЛАВИШЕ Ctrl+Alt+Enter (для клиентов из Instagram)
-//
-// Все модули — один общий контекст расширения: функции и константы из других модулей доступны напрямую.
-// Содержит: waitEnabledInBitrix, sendBitrixChatText, findBitrixChatFileInput, loadPriceFileDataTransfer, sendBitrixChatFile, sendFirstMessagesToBitrixChat, onBitrixChatHotkey, attachBitrixChatHotkey
+// BITRIX-ЧАТ: ОТПРАВКА ТЕКСТА, ФАЙЛОВ И НЕСКОЛЬКИХ КАРТИНОК В ОДНОМ СООБЩЕНИИ
 // =====================================================================================
 
-// Ждём активный (не заблокированный) элемент. Не зависит от состояния плагина (старт/пауза)
 async function waitEnabledInBitrix(selector, timeout) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -17,7 +13,6 @@ async function waitEnabledInBitrix(selector, timeout) {
     return null;
 }
 
-// Отправка одного текстового сообщения
 async function sendBitrixChatText(text) {
     const B = BITRIX_CHAT_SELECTORS;
     const ta = findInAnyDocument(B.textarea);
@@ -28,7 +23,6 @@ async function sendBitrixChatText(text) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     await sleep(rand(600, 1400));
 
-    // кнопка отправки становится активной только после ввода текста
     const btn = await waitEnabledInBitrix(B.sendBtn, 3000);
     if (btn) {
         clickLikeUser(btn);
@@ -37,7 +31,6 @@ async function sendBitrixChatText(text) {
         ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
     }
 
-    // ждём, пока поле очистится (значит, сообщение ушло)
     for (let i = 0; i < 12; i++) {
         await sleep(300);
         const cur = findInAnyDocument(B.textarea);
@@ -46,12 +39,15 @@ async function sendBitrixChatText(text) {
     throw new Error("сообщение не отправилось (поле ввода не очистилось)");
 }
 
-// Скрытый input[type=file] для вложений чата (не аватар чата в шапке и не только-для-картинок)
-function findBitrixChatFileInput() {
-    return findAllInAnyDocument('input[type="file"]').find(i =>
-        !i.classList.contains('bx-im-chat-header__avatar_input') &&
-        !/^\s*image\//i.test(i.accept || '')
-    ) || null;
+function findBitrixChatFileInput(preferImages = false) {
+    const allInputs = findAllInAnyDocument('input[type="file"]').filter(i =>
+        !i.classList.contains('bx-im-chat-header__avatar_input')
+    );
+    if (preferImages) {
+        const imgInput = allInputs.find(i => /image\//i.test(i.accept || ''));
+        if (imgInput) return imgInput;
+    }
+    return allInputs.find(i => !/^\s*image\//i.test(i.accept || '')) || allInputs[0] || null;
 }
 
 function base64ToFile(base64OrDataUrl, fileName, mimeType = 'application/pdf') {
@@ -66,15 +62,24 @@ function base64ToFile(base64OrDataUrl, fileName, mimeType = 'application/pdf') {
     return new File([blob], fileName || pickFileName(), { type: mimeType });
 }
 
+function buildDataTransferFromFiles(fileObjects) {
+    const dt = new DataTransfer();
+    for (const f of fileObjects) {
+        if (f && f.base64) {
+            dt.items.add(base64ToFile(f.base64, f.name || 'image.png', f.mimeType || 'image/png'));
+        }
+    }
+    return dt;
+}
+
 async function loadPriceFileDataTransfer(customFile = null) {
     const dt = new DataTransfer();
     if (customFile && customFile.base64) {
-        const file = base64ToFile(
+        dt.items.add(base64ToFile(
             customFile.base64,
             customFile.name || pickFileName(),
             customFile.mimeType || 'application/pdf'
-        );
-        dt.items.add(file);
+        ));
         return dt;
     }
 
@@ -87,162 +92,148 @@ async function loadPriceFileDataTransfer(customFile = null) {
     return dt;
 }
 
-
-async function sendBitrixChatFile(preloadedDt) {
+async function attachDataTransferToBitrix(dt, preferImages = false) {
     const B = BITRIX_CHAT_SELECTORS;
-    const dt = preloadedDt || await loadPriceFileDataTransfer();
-
     const ta = findInAnyDocument(B.textarea);
     let attached = false;
 
-    // Способ 1: input[type=file] (при необходимости открываем меню «Прикрепить»)
-    let input = findBitrixChatFileInput();
+    let input = findBitrixChatFileInput(preferImages);
     if (!input) {
         const attachBtn = findInAnyDocument(B.attachBtn);
         if (attachBtn) {
             clickLikeUser(attachBtn);
             await sleep(900);
-            input = findBitrixChatFileInput();
+            input = findBitrixChatFileInput(preferImages);
             if (!input) {
                 const items = findAllInAnyDocument('.menu-popup-item, [role="menuitem"]').filter(isVisible);
-                console.log("[Бот Bitrix] Пункты меню 'Прикрепить':", items.map(i => (i.innerText || '').trim().slice(0, 40)));
-                const pick = items.find(i => /(файл|компьютер|устройств|загруз|upload|device|file)/i.test(i.innerText || ''));
+                const pick = items.find(i => /(файл|фото|изображен|компьютер|устройств|загруз|upload|device|file|photo|image)/i.test(i.innerText || ''));
                 if (pick) {
                     clickLikeUser(pick);
                     await sleep(900);
-                    input = findBitrixChatFileInput();
+                    input = findBitrixChatFileInput(preferImages);
                 }
             }
         }
     }
+
     if (input) {
-        console.log(`[Бот Bitrix] Найден input для файла, accept="${input.accept}"`);
         input.files = dt.files;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         attached = true;
     }
 
-    // Способ 2: вставка из буфера обмена в поле ввода
     if (!attached && ta) {
-        console.warn("[Бот Bitrix] input для файла не найден — пробуем paste.");
         ta.focus();
         ta.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
         attached = true;
     }
 
-    // Нажимаем отправку, когда файл загрузился.
-    // После прикрепления Bitrix показывает окно предпросмотра с кнопкой отправки (иконка без текста,
-    // data-testid="im-upload-preview-send-btn"). Пока файл грузится, кнопка заблокирована.
+    return attached;
+}
+
+async function waitAndClickAttachmentSend(captionText = '') {
+    const B = BITRIX_CHAT_SELECTORS;
     const isEnabled = b => !b.disabled && b.getAttribute('aria-disabled') !== 'true' && !b.classList.contains('--disabled');
     const findPreviewBtn = () => findAllInAnyDocument(B.previewSendBtn).find(isVisible) || null;
 
     const deadline = Date.now() + BITRIX_FILE_UPLOAD_WAIT_MS;
     while (Date.now() < deadline) {
-        // а) кнопка отправки в окне предпросмотра файла
         const previewBtn = findPreviewBtn();
         if (previewBtn && isEnabled(previewBtn)) {
-            await sleep(600); // небольшая пауза, чтобы предпросмотр дорисовался
-            console.log("[Бот Bitrix] Нажимаем кнопку отправки в окне предпросмотра файла.");
+            await sleep(600);
+
+            // Если в окне предпросмотра есть поле подписи/текста — заполняем его
+            if (captionText) {
+                const modalRoot = previewBtn.closest('.popup-window, .bx-core-popup-container, .ui-sidepanel-layout, [role="dialog"]') || document;
+                const captionField = modalRoot.querySelector('textarea, input[type="text"], div[contenteditable="true"]');
+                if (captionField) {
+                    captionField.focus();
+                    if (captionField.tagName === 'TEXTAREA' || captionField.tagName === 'INPUT') {
+                        captionField.value = captionText;
+                        captionField.dispatchEvent(new Event('input', { bubbles: true }));
+                    } else {
+                        document.execCommand('insertText', false, captionText);
+                    }
+                    await sleep(400);
+                }
+            }
+
             clickLikeUser(previewBtn);
 
-            // убеждаемся, что окно предпросмотра закрылось (значит, файл ушёл); если нет — нажимаем ещё раз
             for (let attempt = 0; attempt < 2; attempt++) {
                 for (let i = 0; i < 16; i++) {
                     await sleep(500);
-                    if (!findPreviewBtn()) { await sleep(800); return; }
+                    if (!findPreviewBtn()) {
+                        await sleep(800);
+                        // Если подпись не влезла в поле предпросмотра и поле чата свободно — отправим отдельным текстом
+                        const ta = findInAnyDocument(B.textarea);
+                        if (captionText && ta && !(ta.value || '').trim()) {
+                            await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+                            await sendBitrixChatText(captionText);
+                        }
+                        return;
+                    }
                 }
-                if (attempt === 0) {              // повторно нажимаем только один раз, чтобы не отправить файл дважды
+                if (attempt === 0) {
                     const again = findPreviewBtn();
                     if (again && isEnabled(again)) clickLikeUser(again);
                 }
             }
-            throw new Error("файл прикреплён, но окно предпросмотра не закрылось после нажатия «Отправить»");
+            throw new Error("вложение прикреплено, но окно предпросмотра не закрылось после нажатия «Отправить»");
         }
 
-        // б) отдельное окно с текстовой кнопкой «Отправить» (запасной вариант)
         const popupBtn = findAllInAnyDocument('button, .ui-btn, [role="button"]').find(b =>
             isVisible(b) && isEnabled(b) && /^(отправить|send)$/i.test((b.innerText || '').trim()) && !b.matches(B.sendBtn)
         );
-        if (popupBtn) { clickLikeUser(popupBtn); await sleep(1500); return; }
+        if (popupBtn) {
+            clickLikeUser(popupBtn);
+            await sleep(1500);
+            if (captionText) {
+                await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+                await sendBitrixChatText(captionText);
+            }
+            return;
+        }
 
-        // в) основная кнопка отправки, если файл прикреплён прямо к сообщению (запасной вариант)
         if (!previewBtn) {
             const mainBtn = findAllInAnyDocument(B.sendBtn).find(isEnabled);
-            if (mainBtn) { clickLikeUser(mainBtn); await sleep(1500); return; }
+            if (mainBtn) {
+                clickLikeUser(mainBtn);
+                await sleep(1500);
+                if (captionText) {
+                    await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+                    await sendBitrixChatText(captionText);
+                }
+                return;
+            }
         }
 
         await sleep(500);
     }
-    throw new Error("файл не прикрепился или кнопка отправки не стала активной за " + Math.round(BITRIX_FILE_UPLOAD_WAIT_MS / 1000) + " сек.");
+    throw new Error("файл/картинки не прикрепились или кнопка отправки не стала активной за " + Math.round(BITRIX_FILE_UPLOAD_WAIT_MS / 1000) + " сек.");
 }
 
-// 1-е сообщение, 2-е сообщение, файл
-async function sendFirstMessagesToBitrixChat() {
-    if (bitrixChatSending) {
-        showBotToast("Отправка уже идёт, подождите…");
+async function sendBitrixChatFile(preloadedDt) {
+    const dt = preloadedDt || await loadPriceFileDataTransfer();
+    await attachDataTransferToBitrix(dt, false);
+    await waitAndClickAttachmentSend('');
+}
+
+// Отправка нескольких картинок (например, 3 фото) одним заходом вместе с текстом
+async function sendBitrixChatImagesWithText(imageFileObjects, captionText = '') {
+    const validImages = (Array.isArray(imageFileObjects) ? imageFileObjects : []).filter(f => f && f.base64);
+    if (!validImages.length) {
+        if (captionText && captionText.trim()) {
+            await sendBitrixChatText(captionText.trim());
+        }
         return;
     }
 
-    const ta = findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
-    if (!ta) {
-        showBotToast("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».", true);
-        return;
+    const dt = buildDataTransferFromFiles(validImages);
+    const attached = await attachDataTransferToBitrix(dt, true);
+    if (!attached) {
+        throw new Error("не удалось прикрепить картинки в чат Bitrix");
     }
-    if (ta.disabled) {
-        showBotToast("Поле ввода заблокировано. Нажмите «Ответить» в диалоге.", true);
-        return;
-    }
-    if ((ta.value || '').trim()) {
-        showBotToast("В поле ввода уже есть текст — очистите его и повторите.", true);
-        return;
-    }
-
-    bitrixChatSending = true;
-    try {
-        // сначала убеждаемся, что файл доступен, чтобы не отправить тексты без файла
-        const priceDt = await loadPriceFileDataTransfer();
-
-        showBotToast("Отправляю 1-е сообщение…");
-        await sendBitrixChatText(pickVariant('msg1'));
-        await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-
-        showBotToast("Отправляю 2-е сообщение…");
-        await sendBitrixChatText(pickVariant('msg2'));
-        await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-
-        showBotToast("Отправляю файл…");
-        await sendBitrixChatFile(priceDt);
-
-        showBotToast("Готово: 2 сообщения и файл отправлены ✅");
-        console.log("[Бот Bitrix] Первые сообщения и файл отправлены в чат Bitrix.");
-    } catch (e) {
-        console.error("[Бот Bitrix] Ошибка отправки в чат:", e);
-        showBotToast("Ошибка: " + (e && e.message ? e.message : e), true);
-    } finally {
-        bitrixChatSending = false;
-    }
+    await waitAndClickAttachmentSend((captionText || '').trim());
 }
-
-// Горячая клавиша Ctrl+Alt+Enter (по физической клавише — работает при любой раскладке)
-function onBitrixChatHotkey(e) {
-    if (!(e.ctrlKey && e.altKey && !e.shiftKey && (e.code === 'Enter' || e.code === 'NumpadEnter'))) return;
-    if (!location.hostname.includes('bitrix24')) return; // только на вкладке Bitrix
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (e.repeat) return;
-    sendFirstMessagesToBitrixChat();
-}
-
-// Слушаем клавиши и в основной странице, и в iframe (если мессенджер открыт внутри карточки)
-function attachBitrixChatHotkey(doc) {
-    if (doc.__elkiChatHotkey) return;
-    doc.__elkiChatHotkey = true;
-    doc.addEventListener('keydown', onBitrixChatHotkey, true);
-}
-
-attachBitrixChatHotkey(document);
-
-setInterval(() => {
-    try { getAllDocuments().forEach(attachBitrixChatHotkey); } catch (e) {}
-}, 3000);

@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const hotkeyHint = document.getElementById('hotkeyHint');
     const addTextBtn = document.getElementById('addTextBtn');
     const addFileBtn = document.getElementById('addFileBtn');
+    const addAlbumBtn = document.getElementById('addAlbumBtn');
     const editorFileInput = document.getElementById('editorFileInput');
     const stepsList = document.getElementById('stepsList');
     const saveFlowBtn = document.getElementById('saveFlowBtn');
@@ -62,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentFlowKey = 'firstTouch';
     let isRecordingHotkey = false;
     let pendingFileTargetIndex = null;
+    let pendingAlbumTargetIndex = null;
 
     let flowConfig = {
         hotkeys: {
@@ -176,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         stepsList.innerHTML = '';
 
         if (!items.length) {
-            stepsList.innerHTML = '<div class="hint" style="text-align:center;">Список пуст. Нажмите «+ Текст» или «+ Файл».</div>';
+            stepsList.innerHTML = '<div class="hint" style="text-align:center;">Список пуст. Нажмите «+ Текст», «+ Файл» или «+ Фото с текстом».</div>';
             return;
         }
 
@@ -188,7 +190,10 @@ document.addEventListener('DOMContentLoaded', () => {
             head.className = 'step-head';
 
             const title = document.createElement('span');
-            title.textContent = `#${idx + 1} · ${item.type === 'file' ? 'Файл' : 'Текст'}`;
+            const typeLabel = item.type === 'file'
+                ? 'Файл'
+                : (item.type === 'images_with_text' ? 'Фото с текстом' : 'Текст');
+            title.textContent = `#${idx + 1} · ${typeLabel}`;
 
             const actions = document.createElement('div');
             actions.className = 'step-actions';
@@ -240,6 +245,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     item.text = e.target.value;
                 });
                 card.appendChild(ta);
+            } else if (item.type === 'images_with_text') {
+                const imgs = Array.isArray(item.images) ? item.images : [];
+                const meta = document.createElement('div');
+                meta.className = 'file-meta';
+                meta.textContent = imgs.length
+                    ? `Фото (${imgs.length}): ${imgs.map(f => f.name).join(', ')}`
+                    : 'Фото не выбраны (нажмите «Выбрать фото»)';
+
+                const chooseBtn = document.createElement('button');
+                chooseBtn.type = 'button';
+                chooseBtn.className = 'btn-secondary btn-small';
+                chooseBtn.style.marginTop = '6px';
+                chooseBtn.textContent = 'Выбрать фото';
+                chooseBtn.addEventListener('click', () => {
+                    pendingFileTargetIndex = null;
+                    pendingAlbumTargetIndex = idx;
+                    editorFileInput.accept = 'image/*';
+                    editorFileInput.value = '';
+                    editorFileInput.click();
+                });
+
+                const captionTa = document.createElement('textarea');
+                captionTa.style.marginTop = '6px';
+                captionTa.value = item.text || '';
+                captionTa.placeholder = 'Текст к фотографиям (необязательно)...';
+                captionTa.addEventListener('input', (e) => {
+                    item.text = e.target.value;
+                });
+
+                card.append(meta, chooseBtn, captionTa);
             } else {
                 const meta = document.createElement('div');
                 meta.className = 'file-meta';
@@ -253,7 +288,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 chooseBtn.style.marginTop = '6px';
                 chooseBtn.textContent = 'Выбрать файл';
                 chooseBtn.addEventListener('click', () => {
+                    pendingAlbumTargetIndex = null;
                     pendingFileTargetIndex = idx;
+                    editorFileInput.accept = '';
                     editorFileInput.value = '';
                     editorFileInput.click();
                 });
@@ -329,11 +366,59 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (editorFileInput) {
-        editorFileInput.addEventListener('change', () => {
-            const file = editorFileInput.files && editorFileInput.files[0];
-            if (!file || pendingFileTargetIndex === null) return;
+    if (addAlbumBtn) {
+        addAlbumBtn.addEventListener('click', () => {
+            getActiveItems().push({
+                id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                type: 'images_with_text',
+                images: [],
+                text: ''
+            });
+            renderSteps();
+        });
+    }
 
+    if (editorFileInput) {
+        editorFileInput.addEventListener('change', async () => {
+            const files = Array.from(editorFileInput.files || []);
+            if (!files.length) return;
+
+            if (pendingAlbumTargetIndex !== null) {
+                const targetIdx = pendingAlbumTargetIndex;
+                pendingAlbumTargetIndex = null;
+                editorStatus.textContent = `Читаю фото (${files.length} шт.)...`;
+
+                const readOne = (f) => new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        name: f.name,
+                        mimeType: f.type || 'image/jpeg',
+                        base64: reader.result
+                    });
+                    reader.onerror = () => reject(new Error(`Ошибка чтения ${f.name}`));
+                    reader.readAsDataURL(f);
+                });
+
+                try {
+                    const loadedImages = await Promise.all(files.map(readOne));
+                    const items = getActiveItems();
+                    if (items[targetIdx]) {
+                        items[targetIdx] = {
+                            ...items[targetIdx],
+                            type: 'images_with_text',
+                            images: loadedImages
+                        };
+                        renderSteps();
+                        editorStatus.textContent = `Загружено фото: ${loadedImages.length} шт. Нажмите «Сохранить сценарий».`;
+                    }
+                } catch (e) {
+                    editorStatus.textContent = 'Ошибка при чтении фотографий.';
+                }
+                return;
+            }
+
+            if (pendingFileTargetIndex === null) return;
+            const file = files[0];
             const targetIdx = pendingFileTargetIndex;
             pendingFileTargetIndex = null;
             editorStatus.textContent = `Читаю файл ${file.name}...`;
