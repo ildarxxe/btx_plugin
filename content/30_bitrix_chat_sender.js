@@ -143,7 +143,6 @@ async function waitAndClickAttachmentSend(captionText = '') {
         if (previewBtn && isEnabled(previewBtn)) {
             await sleep(600);
 
-            // Если в окне предпросмотра есть поле подписи/текста — заполняем его
             if (captionText) {
                 const modalRoot = previewBtn.closest('.popup-window, .bx-core-popup-container, .ui-sidepanel-layout, [role="dialog"]') || document;
                 const captionField = modalRoot.querySelector('textarea, input[type="text"], div[contenteditable="true"]');
@@ -166,12 +165,6 @@ async function waitAndClickAttachmentSend(captionText = '') {
                     await sleep(500);
                     if (!findPreviewBtn()) {
                         await sleep(800);
-                        // Если подпись не влезла в поле предпросмотра и поле чата свободно — отправим отдельным текстом
-                        const ta = findInAnyDocument(B.textarea);
-                        if (captionText && ta && !(ta.value || '').trim()) {
-                            await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-                            await sendBitrixChatText(captionText);
-                        }
                         return;
                     }
                 }
@@ -189,10 +182,6 @@ async function waitAndClickAttachmentSend(captionText = '') {
         if (popupBtn) {
             clickLikeUser(popupBtn);
             await sleep(1500);
-            if (captionText) {
-                await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-                await sendBitrixChatText(captionText);
-            }
             return;
         }
 
@@ -201,10 +190,6 @@ async function waitAndClickAttachmentSend(captionText = '') {
             if (mainBtn) {
                 clickLikeUser(mainBtn);
                 await sleep(1500);
-                if (captionText) {
-                    await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-                    await sendBitrixChatText(captionText);
-                }
                 return;
             }
         }
