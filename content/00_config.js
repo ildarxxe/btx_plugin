@@ -191,3 +191,29 @@ const BITRIX_CHAT_DELAYS = { betweenMessages: [1500, 3500] };
 const BITRIX_FILE_UPLOAD_WAIT_MS = 20000;
 
 let bitrixChatSending = false;
+
+const CUSTOM_FLOW_STORAGE_KEY = 'elki_custom_flow_v1';
+
+const DEFAULT_HOTKEYS = {
+    firstTouch: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Enter', label: 'Ctrl+Alt+Enter' },
+    touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' }
+};
+
+// Типы элементов в последовательности:
+// - { id, type: 'text', text: '...' }
+// - { id, type: 'file', fileId: '...' }
+// - { id, type: 'file_with_text', fileId: '...', text: '...' }
+const DEFAULT_CUSTOM_FLOWS = {
+    firstTouch: {
+        items: [
+            { id: 'ft_1', type: 'text', text: MESSAGE_VARIANTS.msg1[0] },
+            { id: 'ft_2', type: 'text', text: MESSAGE_VARIANTS.msg2[0] },
+            { id: 'ft_3', type: 'file', fileId: '__DEFAULT_PRICE__' }
+        ]
+    },
+    touch1: {
+        items: [
+            { id: 't1_1', type: 'text', text: MESSAGE_VARIANTS.msg3[0] }
+        ]
+    }
+};

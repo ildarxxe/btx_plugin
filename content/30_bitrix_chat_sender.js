@@ -54,16 +54,35 @@ function findBitrixChatFileInput() {
     ) || null;
 }
 
-// Читает price.pdf. Во вкладке Bitrix прямой fetch файла расширения запрещён (Firefox: "Security Error ...
-// may not load moz-extension://"), пока домен Bitrix не добавлен в web_accessible_resources. Поэтому файл
-// сначала просим у background.js (у него доступ к файлам расширения есть всегда), а прямой fetch — запасной вариант.
-async function loadPriceFileDataTransfer() {
+function base64ToFile(base64OrDataUrl, fileName, mimeType = 'application/pdf') {
+    const cleanBase64 = base64OrDataUrl.includes(',')
+        ? base64OrDataUrl.split(',')[1]
+        : base64OrDataUrl;
+    const binary = atob(cleanBase64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mimeType });
+    return new File([blob], fileName || pickFileName(), { type: mimeType });
+}
+
+async function loadPriceFileDataTransfer(customFile = null) {
+    const dt = new DataTransfer();
+    if (customFile && customFile.base64) {
+        const file = base64ToFile(
+            customFile.base64,
+            customFile.name || pickFileName(),
+            customFile.mimeType || 'application/pdf'
+        );
+        dt.items.add(file);
+        return dt;
+    }
+
     const response = await fetch(PRICE_FILE_PATH);
     if (!response.ok) {
         throw new Error(`Не удалось загрузить price.pdf (статус ${response.status})`);
     }
     const blob = await response.blob();
-    const dt = new DataTransfer();
     dt.items.add(new File([blob], pickFileName(), { type: 'application/pdf' }));
     return dt;
 }

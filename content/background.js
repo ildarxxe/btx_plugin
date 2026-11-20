@@ -32,6 +32,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 await sendToTampermonkey(activeTab.id, request.payload);
             }
         })();
+    } else if (request.action === "SAVE_CUSTOM_FLOW") {
+        (async () => {
+            await chrome.storage.local.set({ elki_custom_flow_v1: request.payload });
+            const tabs = await chrome.tabs.query({});
+            for (const tab of tabs) {
+                if (tab.url && tab.url.includes("bitrix24")) {
+                    await sendToTampermonkey(tab.id, {
+                        action: "CUSTOM_FLOW_UPDATED",
+                        payload: request.payload
+                    });
+                }
+            }
+            if (sendResponse) sendResponse({ ok: true });
+        })();
+        return true;
     }
     return false;
 });

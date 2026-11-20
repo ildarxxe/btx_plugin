@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <style>
+        * { box-sizing: border-box; }
         body {
-            width: 280px;
-            padding: 15px;
+            width: 330px;
+            min-height: 460px;
+            padding: 14px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: #f9f9fb;
             color: #222;
@@ -15,12 +17,17 @@
             margin: 0 0 12px 0;
             font-size: 16px;
             color: #111;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid #e2e4e8;
             padding-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
         }
-        .control-group {
-            margin-bottom: 12px;
-        }
+        .view { display: none; }
+        .view.active { display: block; }
+
+        .control-group { margin-bottom: 12px; }
         label {
             display: block;
             font-size: 12px;
@@ -28,13 +35,19 @@
             margin-bottom: 5px;
             color: #555;
         }
-        select, input[type="text"] {
+        select, input[type="text"], textarea {
             width: 100%;
-            padding: 7px;
+            padding: 7px 8px;
             border: 1px solid #ccc;
-            border-radius: 5px;
+            border-radius: 6px;
             font-size: 13px;
-            box-sizing: border-box;
+            font-family: inherit;
+            background: #fff;
+            color: #222;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 62px;
         }
         .checkbox-row {
             display: flex;
@@ -43,66 +56,230 @@
             font-size: 13px;
             margin-top: 8px;
         }
-        .checkbox-row input {
-            width: auto;
-        }
+        .checkbox-row input { width: auto; }
+
         button {
             width: 100%;
-            padding: 10px;
+            padding: 9px 10px;
             border: none;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            margin-top: 8px;
-            transition: background 0.2s;
+            margin-top: 7px;
+            transition: background 0.15s, opacity 0.15s;
         }
-        #startBtn {
-            background-color: #25D366;
-            color: white;
+        button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        #startBtn { background-color: #25D366; color: #fff; }
+        #startBtn:hover:not(:disabled) { background-color: #1ebe5d; }
+
+        #stopBtn { background-color: #ff4d4f; color: #fff; }
+        #stopBtn:hover:not(:disabled) { background-color: #d9363e; }
+
+        .btn-secondary { background-color: #eef1f5; color: #222; border: 1px solid #d4d8df; }
+        .btn-secondary:hover:not(:disabled) { background-color: #e2e7ee; }
+
+        .btn-primary { background-color: #2f6fed; color: #fff; }
+        .btn-primary:hover:not(:disabled) { background-color: #225ad1; }
+
+        .btn-choice {
+            text-align: left;
+            padding: 12px;
+            background: #fff;
+            border: 1px solid #d4d8df;
+            color: #111;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
         }
-        #startBtn:hover {
-            background-color: #1ebe5d;
+        .btn-choice:hover:not(:disabled) {
+            border-color: #2f6fed;
+            background: #f3f7ff;
         }
-        #stopBtn {
-            background-color: #ff4d4f;
-            color: white;
+        .btn-choice small {
+            font-weight: 400;
+            color: #666;
+            font-size: 11px;
         }
-        #stopBtn:hover {
-            background-color: #d9363e;
+
+        .btn-back {
+            width: auto;
+            margin: 0;
+            padding: 4px 8px;
+            font-size: 12px;
+            background: #eef1f5;
+            color: #333;
+            border: 1px solid #d4d8df;
+        }
+
+        .hotkey-row {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .hotkey-row input { flex: 1; }
+        .btn-small {
+            width: auto;
+            margin: 0;
+            padding: 7px 10px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .add-row {
+            display: flex;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .add-row button { margin-top: 0; flex: 1; }
+
+        .steps-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .step-card {
+            background: #fff;
+            border: 1px solid #d8dce3;
+            border-radius: 7px;
+            padding: 8px;
+        }
+        .step-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #444;
+        }
+        .step-actions {
+            display: flex;
+            gap: 4px;
+        }
+        .icon-btn {
+            width: auto;
+            margin: 0;
+            padding: 3px 7px;
+            font-size: 11px;
+            background: #f0f2f5;
+            color: #333;
+            border: 1px solid #d0d5dd;
+        }
+        .icon-btn.danger {
+            background: #fff1f0;
+            color: #cf1322;
+            border-color: #ffa39e;
+        }
+        .file-meta {
+            font-size: 12px;
+            color: #333;
+            background: #f6f8fa;
+            padding: 6px 8px;
+            border-radius: 5px;
+            border: 1px dashed #c7cdd6;
+            word-break: break-all;
+        }
+        .hint {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+            line-height: 1.35;
         }
         #statusText {
             margin-top: 10px;
             font-size: 12px;
             color: #666;
             text-align: center;
+            min-height: 16px;
         }
+        .hidden-input { display: none; }
     </style>
 </head>
 <body>
-<h3>Авто-рассылка Bitrix → WA</h3>
+<!-- ЭКРАН 1: ГЛАВНАЯ -->
+<div id="view-home" class="view active">
+    <h3><span>Авто-рассылка Bitrix → WA</span></h3>
 
-<div class="control-group">
-    <label for="modeSelect">Выберите колонку</label>
-    <select id="modeSelect">
-        <option value="new">Новая (отправить прайс → 1 касание)</option>
-        <option value="touch1">1 касание (напомнить → 2 касание)</option>
-    </select>
-</div>
-
-<div class="control-group">
-    <div class="checkbox-row">
-        <!-- По умолчанию тестовый режим ВЫКЛЮЧЕН (раньше здесь стояло checked) -->
-        <input type="checkbox" id="testModeCheck">
-        <label for="testModeCheck" style="margin:0; font-weight:normal;">Тестовый режим (мой номер)</label>
+    <div class="control-group">
+        <label for="modeSelect">Выберите колонку</label>
+        <select id="modeSelect">
+            <option value="new">Новая (отправить прайс → 1 касание)</option>
+            <option value="touch1">1 касание (напомнить → 2 касание)</option>
+        </select>
     </div>
-    <input type="text" id="testPhoneInput" value="87781193946" style="margin-top: 6px;" placeholder="Тестовый номер">
+
+    <div class="control-group">
+        <div class="checkbox-row">
+            <input type="checkbox" id="testModeCheck">
+            <label for="testModeCheck" style="margin:0; font-weight:normal;">Тестовый режим (мой номер)</label>
+        </div>
+        <input type="text" id="testPhoneInput" value="87781193946" style="margin-top: 6px;" placeholder="Тестовый номер">
+    </div>
+
+    <button id="startBtn">▶ Запустить рассылку</button>
+    <button id="stopBtn">⏹ Остановить / Сбросить</button>
+    <button id="openEditMenuBtn" class="btn-secondary">✎ Редактировать сообщения</button>
+
+    <div id="statusText">Готов к работе</div>
 </div>
 
-<button id="startBtn">▶ Запустить рассылку</button>
-<button id="stopBtn">⏹ Остановить / Сбросить</button>
+<!-- ЭКРАН 2: ВЫБОР ТИПА СООБЩЕНИЙ -->
+<div id="view-choose-type" class="view">
+    <h3>
+        <span>Кому настраиваем?</span>
+        <button type="button" id="backToHomeBtn" class="btn-back">← Назад</button>
+    </h3>
 
-<div id="statusText">Готов к работе</div>
+    <button type="button" id="pickFirstTouchBtn" class="btn-choice">
+        <strong>Новым (первые сообщения)</strong>
+        <small>Текст, файлы, порядок и горячая клавиша</small>
+    </button>
+
+    <button type="button" id="pickTouch1Btn" class="btn-choice">
+        <strong>1-му касанию</strong>
+        <small>Текст, файлы, порядок и горячая клавиша</small>
+    </button>
+</div>
+
+<!-- ЭКРАН 3: РЕДАКТОР СЦЕНАРИЯ -->
+<div id="view-editor" class="view">
+    <h3>
+        <span id="editorTitle">Редактор</span>
+        <button type="button" id="backToChooseBtn" class="btn-back">← К выбору типа</button>
+    </h3>
+
+    <div class="control-group">
+        <label for="hotkeyInput">Комбинация клавиш для отправки</label>
+        <div class="hotkey-row">
+            <input type="text" id="hotkeyInput" readonly placeholder="Например: Ctrl+Alt+Enter">
+            <button type="button" id="recordHotkeyBtn" class="btn-secondary btn-small">Записать</button>
+        </div>
+        <div id="hotkeyHint" class="hint">Нажмите «Записать», затем нужную комбинацию (например, Ctrl+Alt+1 или Ctrl+Alt+Shift+Enter).</div>
+    </div>
+
+    <div class="control-group">
+        <label>Порядок отправки (тексты и файлы)</label>
+        <div class="add-row">
+            <button type="button" id="addTextBtn" class="btn-secondary">+ Текст</button>
+            <button type="button" id="addFileBtn" class="btn-secondary">+ Файл</button>
+        </div>
+        <input type="file" id="editorFileInput" class="hidden-input">
+        <div class="hint">Файлы любого размера сохраняются локально без ограничений. Если файл не выбран — используется дефолтный price.pdf.</div>
+
+        <div id="stepsList" class="steps-list"></div>
+    </div>
+
+    <button type="button" id="saveFlowBtn" class="btn-primary">💾 Сохранить сценарий</button>
+    <button type="button" id="resetFlowBtn" class="btn-secondary">↺ Сбросить к стандартному</button>
+    <div id="editorStatus" class="hint" style="text-align:center; margin-top:8px;"></div>
+</div>
 
 <script src="remote_popup.js"></script>
 </body>

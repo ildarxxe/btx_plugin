@@ -1,0 +1,242 @@
+// =====================================================================================
+// МОДУЛЬ 32_bitrix_custom_flow.js
+// BITRIX-ЧАТ: НАСТРАИВАЕМЫЕ СЦЕНАРИИ (1-е сообщения / 1-е касание), ФАЙЛЫ И ГОРЯЧИЕ КЛАВИШИ
+//
+// Все модули — один общий контекст расширения: функции и константы из других модулей доступны напрямую.
+// Содержит: loadCustomFlowState, saveFlowToTmStorage, readFlowFromTmStorage, findUploadedFileById,
+//           ensureBitrixChatReadyForFlow, executeFlowStep, runBitrixFlow, matchesHotkey,
+//           onCustomBitrixHotkey, attachCustomBitrixHotkeys
+// =====================================================================================
+
+let customFlowState = {
+    hotkeys: {
+        firstTouch: { ...DEFAULT_HOTKEYS.firstTouch },
+        touch1: { ...DEFAULT_HOTKEYS.touch1 }
+    },
+    flows: {
+        firstTouch: { items: DEFAULT_CUSTOM_FLOWS.firstTouch.items.map(x => ({ ...x })) },
+        touch1: { items: DEFAULT_CUSTOM_FLOWS.touch1.items.map(x => ({ ...x })) }
+    }
+};
+
+let customFlowBusy = false;
+
+function saveFlowToTmStorage(payload) {
+    try {
+        if (typeof GM_setValue === 'function') {
+            GM_setValue(CUSTOM_FLOW_STORAGE_KEY, JSON.stringify(payload));
+        }
+    } catch (e) {
+        console.warn('[Бот Bitrix] Ошибка GM_setValue:', e);
+    }
+}
+
+function readFlowFromTmStorage() {
+    try {
+        if (typeof GM_getValue === 'function') {
+            const raw = GM_getValue(CUSTOM_FLOW_STORAGE_KEY);
+            if (!raw) return null;
+            return typeof raw === 'string' ? JSON.parse(raw) : raw;
+        }
+    } catch (e) {
+        console.warn('[Бот Bitrix] Ошибка GM_getValue:', e);
+    }
+    return null;
+}
+
+function applySavedFlowObject(saved) {
+    if (!saved || typeof saved !== 'object') return;
+    customFlowState = {
+        hotkeys: {
+            firstTouch: { ...DEFAULT_HOTKEYS.firstTouch, ...(saved.hotkeys && saved.hotkeys.firstTouch) },
+            touch1: { ...DEFAULT_HOTKEYS.touch1, ...(saved.hotkeys && saved.hotkeys.touch1) }
+        },
+        flows: {
+            firstTouch: {
+                items: Array.isArray(saved.flows && saved.flows.firstTouch && saved.flows.firstTouch.items)
+                    ? saved.flows.firstTouch.items.map(x => ({ ...x }))
+                    : DEFAULT_CUSTOM_FLOWS.firstTouch.items.map(x => ({ ...x }))
+            },
+            touch1: {
+                items: Array.isArray(saved.flows && saved.flows.touch1 && saved.flows.touch1.items)
+                    ? saved.flows.touch1.items.map(x => ({ ...x }))
+                    : DEFAULT_CUSTOM_FLOWS.touch1.items.map(x => ({ ...x }))
+            }
+        }
+    };
+}
+
+async function loadCustomFlowState() {
+    // 1. Сначала пробуем прочитать из хранилища Tampermonkey (без жёстких лимитов на размер файлов)
+    const tmSaved = readFlowFromTmStorage();
+    if (tmSaved) {
+        applySavedFlowObject(tmSaved);
+        return customFlowState;
+    }
+
+    // 2. Фолбэк на chrome.storage.local
+    try {
+        const res = await chrome.storage.local.get([CUSTOM_FLOW_STORAGE_KEY]);
+        const extSaved = res && res[CUSTOM_FLOW_STORAGE_KEY];
+        if (extSaved) {
+            applySavedFlowObject(extSaved);
+        }
+    } catch (e) {
+        console.warn('[Бот Bitrix] Не удалось загрузить кастомный сценарий из chrome.storage.local:', e);
+    }
+
+    return customFlowState;
+}
+
+function buildFilePayloadFromStep(step) {
+    if (step && step.base64) {
+        return {
+            name: step.fileName || pickFileName(),
+            mimeType: step.mimeType || 'application/pdf',
+            base64: step.base64
+        };
+    }
+    return null; // null -> loadPriceFileDataTransfer возьмёт стандартный price.pdf с GitHub
+}
+
+function ensureBitrixChatReadyForFlow() {
+    if (customFlowBusy || bitrixChatSending) {
+        showBotToast("Отправка уже идёт, подождите…");
+        return false;
+    }
+    const ta = findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
+    if (!ta) {
+        showBotToast("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».", true);
+        return false;
+    }
+    if (ta.disabled) {
+        showBotToast("Поле ввода заблокировано. Нажмите «Ответить» в диалоге.", true);
+        return false;
+    }
+    if ((ta.value || '').trim()) {
+        showBotToast("В поле ввода уже есть текст — очистите его и повторите.", true);
+        return false;
+    }
+    return true;
+}
+
+async function runBitrixFlow(flowKey) {
+    if (!ensureBitrixChatReadyForFlow()) return;
+
+    await loadCustomFlowState();
+    const flow = customFlowState.flows[flowKey];
+    const items = (flow && Array.isArray(flow.items)) ? flow.items : [];
+
+    if (!items.length) {
+        showBotToast("В выбранном сценарии нет элементов для отправки.", true);
+        return;
+    }
+
+    customFlowBusy = true;
+    bitrixChatSending = true;
+
+    try {
+        // Заранее готовим DataTransfer для всех файловых шагов (свои файлы или дефолтный price.pdf)
+        const preparedFiles = [];
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item && item.type === 'file') {
+                const fileObj = buildFilePayloadFromStep(item);
+                preparedFiles[i] = await loadPriceFileDataTransfer(fileObj);
+            }
+        }
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (!item || !item.type) continue;
+
+            if (i > 0) {
+                await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+            }
+
+            if (item.type === 'text') {
+                const txt = (item.text || '').trim();
+                if (!txt) continue;
+                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю текст…`);
+                await sendBitrixChatText(txt);
+            } else if (item.type === 'file') {
+                const labelName = item.fileName || 'price.pdf';
+                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю файл ${labelName}…`);
+                await sendBitrixChatFile(preparedFiles[i]);
+            }
+        }
+
+        showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
+        console.log(`[Бот Bitrix] Сценарий '${flowKey}' успешно выполнен.`);
+    } catch (e) {
+        console.error("[Бот Bitrix] Ошибка выполнения сценария:", e);
+        showBotToast("Ошибка: " + (e && e.message ? e.message : e), true);
+    } finally {
+        bitrixChatSending = false;
+        customFlowBusy = false;
+    }
+}
+
+function matchesHotkey(event, cfg) {
+    if (!cfg || !cfg.code) return false;
+    return (
+        Boolean(event.ctrlKey) === Boolean(cfg.ctrlKey) &&
+        Boolean(event.altKey) === Boolean(cfg.altKey) &&
+        Boolean(event.shiftKey) === Boolean(cfg.shiftKey) &&
+        event.code === cfg.code
+    );
+}
+
+function onCustomBitrixHotkey(e) {
+    if (!location.hostname.includes('bitrix24')) return;
+    const hkFirst = customFlowState.hotkeys.firstTouch;
+    const hkTouch1 = customFlowState.hotkeys.touch1;
+
+    if (matchesHotkey(e, hkTouch1)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        runBitrixFlow('touch1');
+        return;
+    }
+
+    if (matchesHotkey(e, hkFirst)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        runBitrixFlow('firstTouch');
+    }
+}
+
+function attachCustomBitrixHotkeys(doc) {
+    if (!doc || doc.__elkiCustomFlowHotkey) return;
+    doc.__elkiCustomFlowHotkey = true;
+    doc.addEventListener('keydown', onCustomBitrixHotkey, true);
+}
+
+loadCustomFlowState().then(() => {
+    attachCustomBitrixHotkeys(document);
+    try { getAllDocuments().forEach(attachCustomBitrixHotkeys); } catch (e) {}
+});
+
+setInterval(() => {
+    try { getAllDocuments().forEach(attachCustomBitrixHotkeys); } catch (e) {}
+}, 3000);
+
+window.addEventListener('message', async (event) => {
+    if (event.source !== window || !event.data || event.data.source !== 'BTX_EXT_BG') return;
+
+    if (event.data.action === 'SAVE_CUSTOM_FLOW_TO_TM' && event.data.payload) {
+        saveFlowToTmStorage(event.data.payload);
+        await loadCustomFlowState();
+        showBotToast('Сценарий и файлы сохранены ✅');
+        return;
+    }
+
+    if (event.data.action === 'CUSTOM_FLOW_UPDATED' && event.data.payload) {
+        if (typeof GM_setValue === 'function') {
+            saveFlowToTmStorage(event.data.payload);
+        }
+        await loadCustomFlowState();
+    }
+});
