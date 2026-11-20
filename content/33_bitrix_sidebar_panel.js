@@ -153,8 +153,23 @@
         const toggleBtn = document.getElementById(TOGGLE_ID);
         const iframe = document.getElementById(FRAME_ID);
 
-        if (drawer) drawer.style.display = isOpen ? 'flex' : 'none';
-        if (toggleBtn) toggleBtn.style.display = isOpen ? 'none' : 'block';
+        if (drawer) {
+            if (isOpen) {
+                drawer.style.display = 'flex';
+                drawer.style.visibility = 'visible';
+                drawer.style.pointerEvents = 'auto';
+            } else {
+                drawer.style.pointerEvents = 'none';
+                drawer.style.visibility = 'hidden';
+                drawer.style.display = 'none';
+                // Принудительный reflow, чтобы в Firefox не оставался "фантомный" слой
+                void drawer.offsetHeight;
+            }
+        }
+
+        if (toggleBtn) {
+            toggleBtn.style.display = isOpen ? 'none' : 'block';
+        }
 
         if (isOpen && iframe) {
             if (!iframe.src) {
@@ -167,7 +182,6 @@
             }
         }
     }
-
     // Принимаем команды из встроенного iframe панели на странице Bitrix24
     window.addEventListener('message', async (event) => {
         const data = event.data;
