@@ -5,6 +5,11 @@
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
 
+const RUN_HOTKEYS = {
+    start: { ctrlKey: true, altKey: true, shiftKey: true, codes: new Set(['Equal', 'NumpadAdd', 'Plus']) },
+    stop: { ctrlKey: true, altKey: true, shiftKey: true, codes: new Set(['Minus', 'NumpadSubtract']) }
+};
+
 function getCardId(card) {
     const direct = card.getAttribute('data-id');
     if (direct) return direct;
@@ -37,13 +42,85 @@ function startAutomation() {
     BOT_CONFIG.isPaused = false;
     columnPreloaded = false;
     console.log(`[Бот Bitrix] Запуск рассылки в чате Bitrix. Режим: ${BOT_CONFIG.runMode}`);
+    if (typeof showBotToast === 'function') {
+        showBotToast(`Рассылка запущена (${BOT_CONFIG.runMode === 'new' ? 'Новые' : '1 касание'}) ▶`);
+    }
     processNextCard();
+}
+
+function forceStopAutomation(reason = 'горячая клавиша остановки') {
+    BOT_CONFIG.isPaused = true;
+    isScriptRunning = false;
+    clearTimeout(idleTimer);
+    removeLeftConfirmModal();
+    if (typeof stopBot === 'function') {
+        try {
+            stopBot(reason);
+        } catch (e) {
+            console.warn('[Бот Bitrix] Ошибка при вызове stopBot:', e);
+        }
+    }
+    if (typeof showBotToast === 'function') {
+        showBotToast('Рассылка принудительно остановлена ⏹', true);
+    }
 }
 
 function removeLeftConfirmModal() {
     const existing = document.getElementById(LEFT_CONFIRM_MODAL_ID);
     if (existing) existing.remove();
 }
+
+function matchesRunHotkey(event, cfg) {
+    if (!cfg || !cfg.codes) return false;
+    return (
+        Boolean(event.ctrlKey) === Boolean(cfg.ctrlKey) &&
+        Boolean(event.altKey) === Boolean(cfg.altKey) &&
+        Boolean(event.shiftKey) === Boolean(cfg.shiftKey) &&
+        !event.metaKey &&
+        cfg.codes.has(event.code)
+    );
+}
+
+function onRunControlHotkey(e) {
+    if (!location.hostname.includes('bitrix24')) return;
+
+    if (matchesRunHotkey(e, RUN_HOTKEYS.start)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        cardAttempts = {};
+        startAutomation();
+        return;
+    }
+
+    if (matchesRunHotkey(e, RUN_HOTKEYS.stop)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        forceStopAutomation('горячая клавиша Ctrl+Shift+Alt+-');
+    }
+}
+
+function attachRunControlHotkeys(doc) {
+    if (!doc || doc.__elkiRunControlHotkey) return;
+    doc.__elkiRunControlHotkey = true;
+    doc.addEventListener('keydown', onRunControlHotkey, true);
+}
+
+attachRunControlHotkeys(document);
+try {
+    if (typeof getAllDocuments === 'function') {
+        getAllDocuments().forEach(attachRunControlHotkeys);
+    }
+} catch (e) {}
+
+setInterval(() => {
+    try {
+        if (typeof getAllDocuments === 'function') {
+            getAllDocuments().forEach(attachRunControlHotkeys);
+        }
+    } catch (e) {}
+}, 3000);
 
 // Модалка слева (не перекрывает чат), ждёт Enter = Да, Esc = Нет
 function askTouch1SendConfirmation(cardId, titleText) {
@@ -221,7 +298,6 @@ async function processNextCard() {
     await sleep(1600);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-    // Открываем чат по синему значку «Чат». На новых заявках нажимаем «Ответить» (если есть).
     const chatOpened = await openBitrixChatForCard(cardId, isNewMode);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
@@ -252,7 +328,6 @@ async function processNextCard() {
         return;
     }
 
-    // Режим «1 касание»: показываем модалку слева (Enter = Да, Esc = Нет)
     const answer = await askTouch1SendConfirmation(cardId, cardTitleText);
     if (answer === null || BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
         removeLeftConfirmModal();
@@ -260,7 +335,6 @@ async function processNextCard() {
     }
 
     if (!answer) {
-        // Нажали Esc («Нет») — закрываем чат, закрываем заявку и берём следующую
         console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
         await addHandledCardId(cardId);
         await closeChatAndCard();
@@ -268,7 +342,6 @@ async function processNextCard() {
         return;
     }
 
-    // Нажали Enter («Да») — отправляем сохранённый сценарий 1-го касания и переводим в «3 касание»
     try {
         await sendSavedFlowInBitrixChat('touch1');
         await sleep(1200);
