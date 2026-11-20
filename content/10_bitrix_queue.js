@@ -256,14 +256,26 @@ async function processNextCard() {
 
     let card = null;
     if (isNewMode) {
-        const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-        card = allCards.find(c => !handledSet.has(getCardId(c))) || null;
-        if (!card) {
-            console.log(`[Бот Bitrix] Новых заявок пока нет. Проверка через ${IDLE_POLL_MS / 1000} сек...`);
-            clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => processNextCard(), IDLE_POLL_MS);
-            return;
+        try {
+            await sendSavedFlowInBitrixChat('firstTouch');
+            await sleep(1000);
+            if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+
+            // Закрываем только окно чата (один Escape), не захлопывая саму карточку сделки
+            pressEscapeEverywhere();
+            await sleep(800);
+
+            const moved = await moveCardToStage('touch1');
+            if (!moved) return;
+
+            await addHandledCardId(cardId);
+            await returnToCRMAndEscape();
+            processNextCard();
+        } catch (e) {
+            console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке новых сообщений:`, e);
+            showAlert("Ошибка при отправке сообщений в чате Bitrix: " + (e && e.message ? e.message : e));
         }
+        return;
     } else {
         card = await scrollToFirstNonTodayCard(column, handledSet);
         if (!card) {

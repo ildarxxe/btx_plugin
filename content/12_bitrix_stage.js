@@ -82,23 +82,19 @@ async function moveCardToStage(stageKey) {
 
     console.log(`[Бот CRM] Нажимаем кнопку стадии '${stageName}'...`);
     triggerRealClick(stageBtn);
-    await sleep(700);
 
-    // Если модалка #progressbar-entity-editor или форма partial_editor_form не открылась — пробуем кликнуть ещё раз
-    let modalForm = findInAnyDocument(SELECTORS.bitrix.modalForm) || findInAnyDocument('#progressbar-entity-editor');
+    const modalSelector = '#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm;
+    let modalForm = await waitForElementAnyDoc(modalSelector, 3000);
+
+    // Если модалка не открылась с первого клика — пробуем ещё раз нажать на кнопку стадии
     if (!modalForm) {
-        await sleep(600);
-        modalForm = findInAnyDocument(SELECTORS.bitrix.modalForm) || findInAnyDocument('#progressbar-entity-editor');
-    }
-    if (!modalForm) {
+        const freshBtn = findStageButton(stageSelector) || stageBtn;
         console.log(`[Бот CRM] Повторный клик по стадии '${stageName}'...`);
-        triggerRealClick(stageBtn);
-        modalForm = await waitForElementAnyDoc('#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm, 4000);
+        triggerRealClick(freshBtn);
+        modalForm = await waitForElementAnyDoc(modalSelector, 4000);
     }
 
     if (modalForm) {
-        await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
-    } else if (stageKey === 'touch1') {
         await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
     } else {
         await sleep(1500);
