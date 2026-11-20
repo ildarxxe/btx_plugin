@@ -1,10 +1,9 @@
 // =====================================================================================
 // МОДУЛЬ 10_bitrix_queue.js
-// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (обход колонки, выбор следующей карточки, пропущенные заявки, пауза между клиентами)
-//
-// Все модули — один общий контекст расширения: функции и константы из других модулей доступны напрямую.
-// Содержит: getCardId, getHandledCardIds, addHandledCardId, getCurrentCardId, startAutomation, processNextCard, proceedToNextCardFromStorage, isCardDateToday, isScrollableEl, getKanbanScrollers, isColumnLoading, loadAllColumnCards
+// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (рассылка напрямую в чате Bitrix без WhatsApp)
 // =====================================================================================
+
+const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
 
 function getCardId(card) {
     const direct = card.getAttribute('data-id');
@@ -26,159 +25,269 @@ async function addHandledCardId(id) {
         list.push(id);
         await chrome.storage.local.set({ handledCardIds: list });
     }
-    console.log(`[Бот] Заявка ${id} помечена как обработанная/пропущенная.`);
 }
 
 async function getCurrentCardId() {
-    if (currentCardId) return currentCardId;
-    const st = await chrome.storage.local.get(['botState']);
-    return (st.botState && st.botState.cardId) || null;
+    return currentCardId;
 }
 
 function startAutomation() {
     clearTimeout(idleTimer);
     isScriptRunning = true;
+    BOT_CONFIG.isPaused = false;
     columnPreloaded = false;
-    console.log(`[Бот ДЕБАГ] Запуск автоматизации. Режим: ${BOT_CONFIG.runMode}. Конфиг:`, JSON.stringify(BOT_CONFIG));
-    if (BOT_CONFIG.useTestPhone) {
-        console.warn(`[Бот] ВНИМАНИЕ: включён ТЕСТОВЫЙ режим, все сообщения пойдут на номер ${BOT_CONFIG.testPhone}!`);
-    }
+    console.log(`[Бот Bitrix] Запуск рассылки в чате Bitrix. Режим: ${BOT_CONFIG.runMode}`);
     processNextCard();
 }
 
+function removeLeftConfirmModal() {
+    const existing = document.getElementById(LEFT_CONFIRM_MODAL_ID);
+    if (existing) existing.remove();
+}
+
+// Модалка слева (не перекрывает чат), ждёт Enter = Да, Esc = Нет
+function askTouch1SendConfirmation(cardId, titleText) {
+    return new Promise((resolve) => {
+        removeLeftConfirmModal();
+
+        const box = document.createElement('div');
+        box.id = LEFT_CONFIRM_MODAL_ID;
+        box.style.cssText = [
+            'position:fixed',
+            'left:20px',
+            'top:25%',
+            'width:310px',
+            'z-index:2147483647',
+            'background:#1c2129',
+            'color:#fff',
+            'border:1px solid #384152',
+            'border-radius:10px',
+            'padding:14px',
+            'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+            'font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
+        ].join(';');
+
+        box.innerHTML = `
+            <div style="font-weight:700;font-size:14px;margin-bottom:6px;">1 касание — делать рассылку?</div>
+            <div style="font-size:12px;color:#cbd5e1;margin-bottom:12px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button id="elki-confirm-yes" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;cursor:pointer;">Да (Enter)</button>
+                <button id="elki-confirm-no" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Нет (Esc)</button>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и в «3 касание» · Esc — закрыть и пропустить</div>
+        `;
+
+        document.body.appendChild(box);
+
+        let settled = false;
+        const finish = (answer) => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            removeLeftConfirmModal();
+            resolve(answer);
+        };
+
+        const onKeyDown = (e) => {
+            if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
+                finish(null);
+                return;
+            }
+            if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                finish(true);
+            } else if (e.key === 'Escape' || e.code === 'Escape') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                finish(false);
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+
+        const yesBtn = box.querySelector('#elki-confirm-yes');
+        const noBtn = box.querySelector('#elki-confirm-no');
+        if (yesBtn) yesBtn.addEventListener('click', () => finish(true));
+        if (noBtn) noBtn.addEventListener('click', () => finish(false));
+    });
+}
+
+// Прокручивает колонку «1 касание» вниз до первой заявки с датой не «сегодня»
+async function scrollToFirstNonTodayCard(column, handledSet) {
+    for (let step = 0; step < 50; step++) {
+        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return null;
+
+        const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+        const candidate = cards.find(c => {
+            const id = getCardId(c);
+            return !handledSet.has(id) && !isCardDateToday(c);
+        });
+        if (candidate) {
+            candidate.scrollIntoView({ block: 'center' });
+            await sleep(400);
+            return candidate;
+        }
+
+        const scrollers = getKanbanScrollers(column);
+        for (const sc of scrollers) {
+            sc.scrollTop = sc.scrollHeight;
+            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }
+        if (cards.length) {
+            cards[cards.length - 1].scrollIntoView({ block: 'end' });
+        }
+        await sleep(900);
+    }
+
+    const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+    return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
+}
+
+// Выполняет сохранённый сценарий из 32_bitrix_custom_flow.js напрямую в открытом чате Bitrix
+async function sendSavedFlowInBitrixChat(flowKey) {
+    if (typeof runBitrixFlow === 'function') {
+        await runBitrixFlow(flowKey);
+        return;
+    }
+    throw new Error("Модуль 32_bitrix_custom_flow.js не подключён.");
+}
+
 async function processNextCard() {
+    removeLeftConfirmModal();
+
     if (isStaleInstance()) {
         isScriptRunning = false;
         clearTimeout(idleTimer);
-        console.warn("[Бот] Устаревший экземпляр скрипта остановлен. Обновите страницу (F5), если бот не запускается.");
         return;
     }
     if (BOT_CONFIG.isPaused || !isScriptRunning) return;
 
-    const targetColumnSelector = BOT_CONFIG.runMode === 'new' ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
-    const column = document.querySelector(targetColumnSelector);
+    const isNewMode = BOT_CONFIG.runMode === 'new';
+    const columnSelector = isNewMode ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
+    const column = document.querySelector(columnSelector);
 
     if (!column) {
-        showAlert(`Не найдена колонка для режима '${BOT_CONFIG.runMode}'. Откройте страницу со всеми заявками (канбан).`);
+        showAlert(`Не найдена колонка для режима '${BOT_CONFIG.runMode}'. Откройте канбан с заявками.`);
         return;
-    }
-
-    if (BOT_CONFIG.runMode === 'touch1' && !columnPreloaded) {
-        await loadAllColumnCards(column);
-        columnPreloaded = true;
-        if (BOT_CONFIG.isPaused || !isScriptRunning) return;
     }
 
     const handled = await getHandledCardIds();
-    if (BOT_CONFIG.isPaused || !isScriptRunning) return;
-    const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-    let cards = allCards.filter(c => !handled.includes(getCardId(c)));
-    let todayCount = 0;
+    const handledSet = new Set(handled);
 
-    if (BOT_CONFIG.runMode === 'touch1') {
-        const notToday = cards.filter(c => !isCardDateToday(c));
-        todayCount = cards.length - notToday.length;
-        cards = notToday;
-        cards.reverse();
-    }
-
-    console.log(`[Бот ДЕБАГ] В колонке: ${allCards.length}, пропущено/обработано: ${allCards.length - cards.length - todayCount}` +
-        (BOT_CONFIG.runMode === 'touch1' ? `, сегодняшних (не трогаем): ${todayCount}` : '') +
-        `, к обработке: ${cards.length}`);
-
-    if (cards.length === 0) {
-        if (BOT_CONFIG.runMode === 'new') {
-            console.log(`[Бот ДЕБАГ] Новых заявок пока нет. Проверим снова через ${IDLE_POLL_MS / 1000} сек. (остановить — кнопка STOP в плагине)`);
+    let card = null;
+    if (isNewMode) {
+        const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+        card = allCards.find(c => !handledSet.has(getCardId(c))) || null;
+        if (!card) {
+            console.log(`[Бот Bitrix] Новых заявок пока нет. Проверка через ${IDLE_POLL_MS / 1000} сек...`);
             clearTimeout(idleTimer);
             idleTimer = setTimeout(() => processNextCard(), IDLE_POLL_MS);
             return;
         }
-        if (allCards.length === 0) {
-            alert("В выбранной колонке нет заявок для обработки!");
-        } else {
-            console.log("[Бот ДЕБАГ] Все заявки в этой колонке обработаны или пропущены.");
-            alert("Очередь заявок завершена!\n(Оставшиеся в колонке заявки были пропущены: нет номера или нет WhatsApp.)");
+    } else {
+        card = await scrollToFirstNonTodayCard(column, handledSet);
+        if (!card) {
+            alert("В колонке «1 касание» нет заявок с датой не «сегодня» для обработки.");
+            isScriptRunning = false;
+            return;
         }
-        isScriptRunning = false;
-        return;
     }
 
-    const card = cards[0];
     const cardId = getCardId(card);
     currentCardId = cardId;
 
     cardAttempts[cardId] = (cardAttempts[cardId] || 0) + 1;
     if (cardAttempts[cardId] > 3) {
-        console.warn(`[Бот ДЕБАГ] [Заявка ${cardId}] Открывалась уже ${cardAttempts[cardId] - 1} раза — похоже на зацикливание, пропускаем её.`);
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — пропускаем.`);
         await addHandledCardId(cardId);
-        await returnToCRMAndEscape();
+        await closeChatAndCard();
         processNextCard();
         return;
     }
 
     const cardTitleLink = card.querySelector('.crm-kanban-item-title');
-
     if (!cardTitleLink) {
         await addHandledCardId(cardId);
         processNextCard();
         return;
     }
 
-    console.log(`[Бот ДЕБАГ] [Заявка ${cardId}] Открываем: ${cardTitleLink.innerText}`);
-    cardTitleLink.click();
+    const cardTitleText = (cardTitleLink.innerText || '').trim();
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Открываем: ${cardTitleText}`);
+    clickLikeUser(cardTitleLink);
+    await sleep(1600);
+    if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-    waitForElementWithDebug(SELECTORS.bitrix.phoneWidget, PHONE_WAIT_MS, cardId)
-        .then(async phoneElement => {
-            let phoneNumber = phoneElement ? phoneElement.innerText.trim() : "";
+    // Открываем чат по синему значку «Чат». На новых заявках нажимаем «Ответить» (если есть).
+    const chatOpened = await openBitrixChatForCard(cardId, isNewMode);
+    if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-            if (BOT_CONFIG.useTestPhone) {
-                phoneNumber = BOT_CONFIG.testPhone;
-                console.log(`[Бот ДЕБАГ] [Заявка ${cardId}] [ТЕСТ РЕЖИМ] Используем тестовый номер: ${phoneNumber}`);
-            }
+    if (!chatOpened) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — пропускаем заявку.`);
+        await addHandledCardId(cardId);
+        await closeChatAndCard();
+        processNextCard();
+        return;
+    }
 
-            if (!phoneNumber) {
-                console.warn(`[Бот ДЕБАГ] [Заявка ${cardId}] Номер пустой. Пропускаем.`);
-                await addHandledCardId(cardId);
-                await returnToCRMAndEscape();
-                processNextCard();
-                return;
-            }
+    if (isNewMode) {
+        try {
+            await sendSavedFlowInBitrixChat('firstTouch');
+            await sleep(1200);
+            if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-            // Мессенджер Bitrix — только в боевом режиме "Новые" (в тестовом не трогаем реальный диалог)
-            if (BOT_CONFIG.runMode === 'new' && !BOT_CONFIG.useTestPhone) {
-                const messengerOk = await openMessengerAndAnswer(cardId);
-                if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
-                if (!messengerOk) return; // пауза и алерт уже показаны внутри
-            }
-
-            const stateData = { phone: phoneNumber, cardId: cardId, config: BOT_CONFIG };
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(stateData));
-            await chrome.storage.local.set({ lastSent: false });
-
-            chrome.runtime.sendMessage({
-                action: "openWhatsAppAndSearch",
-                data: stateData
-            });
-        })
-        .catch(async err => {
-            console.warn(`[Бот ДЕБАГ] [Заявка ${cardId}] Номера телефона нет — пропускаем без смены статуса.`);
+            await closeChatAndCard();
+            await ensureCardOpen(cardId);
+            await moveCardToStage('touch1');
             await addHandledCardId(cardId);
             await returnToCRMAndEscape();
             processNextCard();
-        });
+        } catch (e) {
+            console.error(`[Бот Bitrix] [Заявка ${cardId}] Ошибка при отправке новых сообщений:`, e);
+            showAlert("Ошибка при отправке сообщений в чате Bitrix: " + (e && e.message ? e.message : e));
+        }
+        return;
+    }
+
+    // Режим «1 касание»: показываем модалку слева (Enter = Да, Esc = Нет)
+    const answer = await askTouch1SendConfirmation(cardId, cardTitleText);
+    if (answer === null || BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
+        removeLeftConfirmModal();
+        return;
+    }
+
+    if (!answer) {
+        // Нажали Esc («Нет») — закрываем чат, закрываем заявку и берём следующую
+        console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
+        await addHandledCardId(cardId);
+        await closeChatAndCard();
+        processNextCard();
+        return;
+    }
+
+    // Нажали Enter («Да») — отправляем сохранённый сценарий 1-го касания и переводим в «3 касание»
+    try {
+        await sendSavedFlowInBitrixChat('touch1');
+        await sleep(1200);
+        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+
+        await closeChatAndCard();
+        await ensureCardOpen(cardId);
+        await moveCardToStage('touch3');
+        await addHandledCardId(cardId);
+        await returnToCRMAndEscape();
+        processNextCard();
+    } catch (e) {
+        console.error(`[Бот Bitrix] [Заявка ${cardId}] Ошибка при отправке 1-го касания:`, e);
+        showAlert("Ошибка при отправке сообщения 1-го касания: " + (e && e.message ? e.message : e));
+    }
 }
 
 function proceedToNextCardFromStorage() {
-    setTimeout(async () => {
-        const st = await chrome.storage.local.get(['lastSent']);
-        if (st.lastSent) {
-            await chrome.storage.local.set({ lastSent: false });
-            const ms = rand(...(BOT_CONFIG.useTestPhone ? DELAYS.testBetweenClients : DELAYS.betweenClients));
-            console.log(`[Бот] Пауза ${Math.round(ms / 1000)} сек. перед следующим клиентом (чтобы WhatsApp не принял за спам). STOP прерывает паузу.`);
-            await interruptibleSleep(ms);
-        }
-        processNextCard();
-    }, 1000);
+    processNextCard();
 }
 
 function isCardDateToday(card) {
@@ -214,7 +323,6 @@ function isScrollableEl(el) {
     return oy === 'auto' || oy === 'scroll' || oy === 'overlay';
 }
 
-// Прокручиваемые контейнеры колонки: сама колонка, её потомки и предки (где именно скроллится канбан — зависит от версии Bitrix)
 function getKanbanScrollers(column) {
     const found = new Set();
     const add = el => { if (isScrollableEl(el)) found.add(el); };
@@ -223,46 +331,4 @@ function getKanbanScrollers(column) {
     let n = column.parentElement;
     while (n && n !== document.documentElement) { add(n); n = n.parentElement; }
     return Array.from(found);
-}
-
-function isColumnLoading(column) {
-    return Array.from(column.querySelectorAll('[class*="loader"], [class*="preloader"], [class*="spinner"]')).some(isVisible);
-}
-
-async function loadAllColumnCards(column) {
-    // Число в шапке колонки может быть суммой в тенге, а не количеством — используем, только если это чистое целое число
-    const totalEl = column.querySelector('.main-kanban-column-total-item');
-    const totalText = totalEl ? (totalEl.innerText || '').trim() : '';
-    const total = /^\d+$/.test(totalText) ? parseInt(totalText, 10) : NaN;
-
-    let prev = -1;
-    let stable = 0;
-    for (let i = 0; i < 60; i++) {
-        if (BOT_CONFIG.isPaused || !isScriptRunning) return;
-        const items = column.querySelectorAll(SELECTORS.bitrix.cards);
-        const count = items.length;
-        if (!isNaN(total) && count >= total) break;
-
-        if (count === prev && !isColumnLoading(column)) {
-            stable++;
-            if (stable >= 5) break;
-        } else {
-            if (count !== prev) stable = 0;
-            prev = count;
-        }
-
-        const scrollers = getKanbanScrollers(column);
-        if (i === 0 || i % 10 === 0) {
-            console.log(`[Бот ДЕБАГ] Прокрутка колонки: контейнеров ${scrollers.length}, карточек ${count}`,
-                scrollers.map(sc => `${sc.tagName}.${String(sc.className).split(' ').slice(0, 2).join('.')} ${sc.scrollHeight}/${sc.clientHeight}`));
-        }
-        for (const sc of scrollers) {
-            sc.scrollTop = sc.scrollHeight;
-            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
-            sc.dispatchEvent(new WheelEvent('wheel', { deltaY: 400, bubbles: true }));
-        }
-        if (items.length) items[items.length - 1].scrollIntoView({ block: 'end' });
-        await sleep(1200);
-    }
-    console.log(`[Бот ДЕБАГ] Колонка догружена: карточек ${column.querySelectorAll(SELECTORS.bitrix.cards).length}` + (isNaN(total) ? '' : ` из ${total}`));
 }
