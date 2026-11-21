@@ -154,13 +154,34 @@ async function fetchDefaultPriceFile() {
     return new File([blob], randomName, { type: blob.type || 'application/pdf', lastModified: Date.now() });
 }
 
+async function loadPriceFileDataTransfer(stepItem = null) {
+    let fileObj = null;
+    if (stepItem instanceof File) {
+        fileObj = stepItem;
+    } else if (stepItem && stepItem.base64) {
+        fileObj = base64ToFile(stepItem.base64, stepItem.fileName || 'attachment', stepItem.mimeType);
+    } else {
+        fileObj = await fetchDefaultPriceFile();
+    }
+
+    const dt = new DataTransfer();
+    dt.items.add(fileObj);
+    return dt;
+}
+
 function findBitrixFileInputs() {
     const inputs = findAllInAnyDocument('input[type="file"]');
     return inputs.filter(inp => inp && inp.isConnected);
 }
 
-async function attachFilesToBitrixChat(files) {
-    const fileList = Array.isArray(files) ? files.filter(Boolean) : [];
+async function attachFilesToBitrixChat(filesOrDataTransfer) {
+    let fileList = [];
+    if (filesOrDataTransfer && filesOrDataTransfer.files) {
+        fileList = Array.from(filesOrDataTransfer.files).filter(Boolean);
+    } else if (Array.isArray(filesOrDataTransfer)) {
+        fileList = filesOrDataTransfer.filter(Boolean);
+    }
+
     if (!fileList.length) {
         throw new Error("Нет файлов для прикрепления в чат Bitrix.");
     }
@@ -264,14 +285,8 @@ async function waitAndClickAttachmentSend(captionText = '') {
 }
 
 async function sendBitrixChatFileStep(stepItem) {
-    let fileObj = null;
-    if (stepItem && stepItem.base64) {
-        fileObj = base64ToFile(stepItem.base64, stepItem.fileName || 'attachment', stepItem.mimeType);
-    } else {
-        fileObj = await fetchDefaultPriceFile();
-    }
-
-    await attachFilesToBitrixChat([fileObj]);
+    const dt = await loadPriceFileDataTransfer(stepItem);
+    await attachFilesToBitrixChat(dt);
     await waitAndClickAttachmentSend('');
 }
 
