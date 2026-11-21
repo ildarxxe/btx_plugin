@@ -276,7 +276,7 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     if (!isRunActive(gen)) return false;
 
     let editor = null;
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 15; i++) {
         if (!isRunActive(gen)) return false;
         editor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"], .messageservice-message-editor__content .ui-text-editor-editable[contenteditable="true"]')
             .find(isVisible);
@@ -289,34 +289,97 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
+    const doc = editor.ownerDocument || document;
+    const win = doc.defaultView || window;
+    const targetNode = editor.querySelector('p') || editor;
+
     editor.focus();
-    await sleep(200);
-    try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, greetingText);
-    } catch (e) {
-        editor.textContent = greetingText;
+    if (typeof targetNode.focus === 'function') {
+        try { targetNode.focus(); } catch (e) {}
     }
-    editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
+    const range = doc.createRange();
+    range.selectNodeContents(targetNode);
+    range.collapse(false);
+    const sel = win.getSelection && win.getSelection();
+    if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+
+    let inserted = false;
+    try {
+        inserted = Boolean(doc.execCommand('insertText', false, greetingText));
+    } catch (e) {
+        inserted = false;
+    }
+
+    const currentTextAfterInsert = (editor.innerText || editor.textContent || '').trim();
+    if (!inserted || !currentTextAfterInsert) {
+        if (editor.querySelector('p')) {
+            editor.querySelector('p').textContent = greetingText;
+        } else {
+            editor.textContent = greetingText;
+        }
+    }
+
+    editor.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: greetingText
+    }));
+    editor.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: greetingText
+    }));
     editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 
-    await sleep(700);
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в поле ввода:`, JSON.stringify((editor.innerText || '').trim()));
+
+    await sleep(900);
     if (!isRunActive(gen)) return false;
 
-    const editorContainer = editor.closest('.messageservice-message-editor') || editor.parentElement?.parentElement?.parentElement || document;
-    const sendBtn = Array.from(editorContainer.querySelectorAll('button.ui-btn'))
-            .find(b => isVisible(b) && !b.disabled && /^отправить$/i.test((b.innerText || b.textContent || '').trim())) ||
-        findAllInAnyDocument('.messageservice-message-editor button.ui-btn')
-            .find(b => isVisible(b) && !b.disabled && /^отправить$/i.test((b.innerText || b.textContent || '').trim()));
+    const findSmsSendBtn = () => {
+        const scopes = [
+            editor.closest('.messageservice-message-editor'),
+            editor.closest('.crm-entity-stream-section, .crm-timeline__card, .ui-sidepanel-layout, form'),
+            doc
+        ].filter(Boolean);
+
+        for (const scope of scopes) {
+            const btns = Array.from(scope.querySelectorAll('button, [role="button"], .ui-btn'));
+            const match = btns.find(b => {
+                if (!isVisible(b)) return false;
+                if (b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('--disabled')) return false;
+                const txt = (b.innerText || b.textContent || '').trim();
+                return /^отправить$/i.test(txt);
+            });
+            if (match) return match;
+        }
+        return null;
+    };
+
+    let sendBtn = null;
+    for (let i = 0; i < 10; i++) {
+        if (!isRunActive(gen)) return false;
+        sendBtn = findSmsSendBtn();
+        if (sendBtn) break;
+        await sleep(300);
+    }
 
     if (!sendBtn) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Кнопка «Отправить» в редакторе «Сообщение» не найдена.`);
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Кнопка «Отправить» в редакторе «Сообщение» не найдена или неактивна.`);
         return false;
     }
 
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Отправляем 1-е приветственное сообщение через «Сообщение»...`);
     clickLikeUser(sendBtn);
-    await sleep(1500);
+    await sleep(1800);
     return true;
 }
 
