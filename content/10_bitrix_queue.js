@@ -343,8 +343,10 @@ async function processNextCard() {
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
     if (!chatOpened) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — оставляем заявку в очереди и ставим на паузу.`);
-        showAlert(`Не удалось открыть чат для заявки ${cardId}. Заявка не помечена как обработанная.`);
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся (кнопка .crm-entity-widget-client-action-im заблокирована/недоступна) — пропускаем заявку.`);
+        await addHandledCardId(cardId);
+        await closeChatAndCard();
+        processNextCard();
         return;
     }
 
