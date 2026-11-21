@@ -23,12 +23,36 @@ async function ensureCardOpen(cardId) {
     return true;
 }
 
+function isChatActionButtonAvailable(el) {
+    if (!el || !isVisible(el)) return false;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.classList.contains('crm-entity-widget-client-action-disabled') || el.classList.contains('--disabled')) {
+        return false;
+    }
+    return el.classList.contains('crm-entity-widget-client-action-available') || Boolean(el.getAttribute('href'));
+}
+
 // Открывает чат по синему значку «Чат». Если появляется кнопка «Ответить» — нажимает её.
-// Если кнопки «Ответить» нет — просто оставляет открытый чат для отправки.
+// Если кнопка чата заблокирована (<a class="crm-entity-widget-client-action-im"></a> без available) — сразу возвращает false.
 async function openBitrixChatForCard(cardId, clickAnswerIfPresent = false) {
-    const chatBtn = await waitForEnabledAnyDoc(SELECTORS.bitrix.chatBtn, CHAT_BTN_WAIT_MS);
+    const start = Date.now();
+    let chatBtn = null;
+
+    while (Date.now() - start < CHAT_BTN_WAIT_MS) {
+        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return false;
+        const allImBtns = findAllInAnyDocument('a.crm-entity-widget-client-action-im');
+        if (allImBtns.length) {
+            const avail = allImBtns.find(isChatActionButtonAvailable);
+            if (avail) {
+                chatBtn = avail;
+                break;
+            }
+        }
+        await sleep(400);
+    }
+
     if (!chatBtn) {
-        console.log(`[Бот CRM] [Заявка ${cardId}] Кнопка 'Чат' не найдена/недоступна.`);
+        console.log(`[Бот CRM] [Заявка ${cardId}] Кнопка 'Чат' не найдена или заблокирована.`);
         return false;
     }
 
@@ -43,8 +67,8 @@ async function openBitrixChatForCard(cardId, clickAnswerIfPresent = false) {
 
         if (clickAnswerIfPresent) {
             const panelBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
-                .filter(e => !e.disabled && e.getAttribute('aria-disabled') !== 'true');
-            const replyBtn = panelBtns.find(e => /ответить/i.test((e.innerText || e.textContent || '').trim()));
+                .filter(e => isVisible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+            const replyBtn = panelBtns.find(e => /^ответить$/i.test((e.innerText || e.textContent || '').trim()));
             if (replyBtn) {
                 console.log(`[Бот CRM] [Заявка ${cardId}] Нажимаем 'Ответить'.`);
                 clickLikeUser(replyBtn);
@@ -53,12 +77,12 @@ async function openBitrixChatForCard(cardId, clickAnswerIfPresent = false) {
             }
         }
 
-        const ta = findInAnyDocument(SELECTORS.bitrix.messengerTextarea);
+        const ta = findAllInAnyDocument(SELECTORS.bitrix.messengerTextarea).find(isVisible);
         if (ta && !ta.disabled) {
             return true;
         }
 
-        if (!chatLoadedAt && findInAnyDocument(SELECTORS.bitrix.messengerOpened)) {
+        if (!chatLoadedAt && findAllInAnyDocument(SELECTORS.bitrix.messengerOpened).some(isVisible)) {
             chatLoadedAt = Date.now();
         }
         if (chatLoadedAt && (Date.now() - chatLoadedAt >= MESSENGER_ANSWER_GRACE_MS)) {
@@ -68,7 +92,8 @@ async function openBitrixChatForCard(cardId, clickAnswerIfPresent = false) {
         await sleep(400);
     }
 
-    return !!findInAnyDocument(SELECTORS.bitrix.messengerOpened) || !!findInAnyDocument(SELECTORS.bitrix.messengerTextarea);
+    return findAllInAnyDocument(SELECTORS.bitrix.messengerOpened).some(isVisible) ||
+        findAllInAnyDocument(SELECTORS.bitrix.messengerTextarea).some(isVisible);
 }
 
 async function closeChatAndCard() {
@@ -81,7 +106,9 @@ async function returnToCRMAndEscape() {
     pressEscapeEverywhere();
 
     for (let i = 0; i < 8; i++) {
+        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
         await sleep(700);
+        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
         const popup = findInAnyDocument(SELECTORS.bitrix.todoPopup);
         const slider = Array.from(document.querySelectorAll(SELECTORS.bitrix.sidePanelIframe)).find(isVisible);

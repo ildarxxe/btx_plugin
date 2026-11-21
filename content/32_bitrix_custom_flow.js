@@ -97,7 +97,7 @@ function ensureBitrixChatReadyForFlow() {
         showBotToast("Отправка уже идёт, подождите…");
         return false;
     }
-    const ta = findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
+    const ta = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.textarea).find(isVisible) || findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
     if (!ta) {
         showBotToast("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».", true);
         return false;
@@ -113,9 +113,11 @@ function ensureBitrixChatReadyForFlow() {
     return true;
 }
 
-async function runBitrixFlow(flowKey, expectedGen = null) {
+async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
+    const isAutoRun = expectedGen !== null;
     const stillAllowed = () => {
-        if (typeof isRunActive === 'function' && expectedGen !== null) {
+        if (!isAutoRun) return !isStaleInstance();
+        if (typeof isRunActive === 'function') {
             return isRunActive(expectedGen);
         }
         return isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
@@ -128,7 +130,14 @@ async function runBitrixFlow(flowKey, expectedGen = null) {
     if (!stillAllowed()) return;
 
     const flow = customFlowState.flows[flowKey];
-    const items = (flow && Array.isArray(flow.items)) ? flow.items : [];
+    let items = (flow && Array.isArray(flow.items)) ? flow.items.slice() : [];
+
+    if (options && options.skipFirstText) {
+        const firstTextIdx = items.findIndex(it => it && it.type === 'text' && String(it.text || '').trim());
+        if (firstTextIdx >= 0) {
+            items.splice(firstTextIdx, 1);
+        }
+    }
 
     if (!items.length) {
         showBotToast("В выбранном сценарии нет элементов для отправки.", true);

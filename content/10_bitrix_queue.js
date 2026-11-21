@@ -1,6 +1,6 @@
 // =====================================================================================
 // МОДУЛЬ 10_bitrix_queue.js
-// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат -> пауза 2с/Esc в «Новых» -> отправка)
+// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат или СМС «Сообщение» -> пауза 2с/Esc -> отправка)
 // =====================================================================================
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
@@ -169,23 +169,155 @@ setInterval(() => {
     } catch (e) {}
 }, 3000);
 
+// Проверяем, есть ли в чате реальные сообщения менеджера (игнорируем системные блоки Wazzup с замочком)
 function hasSelfMessagesInBitrixChat() {
     const selfMsgs = findAllInAnyDocument(
         '.bx-im-message-base__wrap.--self, .bx-im-message-list-author-group__container.--self'
     ).filter(isVisible);
-    return selfMsgs.length > 0;
+
+    return selfMsgs.some(msg => {
+        if (msg.querySelector('.bx-im-message-status__icon.--lock, [class*="--lock"]')) {
+            return false;
+        }
+        const txt = (msg.innerText || msg.textContent || '').trim();
+        if (!txt) return false;
+        if (/^(переданы дополнительные данные|начат новый диалог|создана новая сделка|контактная информация сохранена|обращение направлено на)/i.test(txt)) {
+            return false;
+        }
+        return true;
+    });
 }
 
+// Проверяем, есть ли в чате сообщение от собеседника с исходящим СМС из Битрикс24
+function hasOutgoingBitrixSmsInChat() {
+    const opponentMsgs = findAllInAnyDocument(
+        '.bx-im-message-base__wrap.--opponent, [data-testid="im-message-base-root"].--opponent'
+    ).filter(isVisible);
+
+    return opponentMsgs.some(msg => {
+        const txt = (msg.innerText || msg.textContent || '');
+        return /===\s*Исходящее сообщение,\s*автор:\s*Битрикс24/i.test(txt);
+    });
+}
+
+// Ищем и нажимаем синюю кнопку «Ответить» внутри открытого чата
 async function clickReplyIfPresentInOpenChat(cardId, gen) {
-    if (!isRunActive(gen)) return;
-    const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
-        .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
-    const replyBtn = joinBtns.find(b => /ответить/i.test((b.innerText || b.textContent || '').trim()));
-    if (replyBtn) {
-        console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
-        clickLikeUser(replyBtn);
-        await sleep(900);
+    if (!isRunActive(gen)) return false;
+
+    const findReplyBtn = () => {
+        const bySelector = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
+            .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true')
+            .find(b => /^ответить$/i.test((b.innerText || b.textContent || '').trim()));
+        if (bySelector) return bySelector;
+
+        const containers = findAllInAnyDocument('.bx-im-messenger, .bx-im-content-chat, .bx-im-textarea').filter(isVisible);
+        for (const box of containers) {
+            const btn = Array.from(box.querySelectorAll('button, [role="button"]'))
+                .find(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true' && /^ответить$/i.test((b.innerText || b.textContent || '').trim()));
+            if (btn) return btn;
+        }
+        return null;
+    };
+
+    for (let i = 0; i < 6; i++) {
+        if (!isRunActive(gen)) return false;
+        const replyBtn = findReplyBtn();
+        if (replyBtn) {
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
+            clickLikeUser(replyBtn);
+            await sleep(900);
+            return true;
+        }
+        await sleep(350);
     }
+    return false;
+}
+
+// Проверяем в таймлайне карточки, есть ли уже запись «Отправлено СМС-сообщение»
+function hasSentSmsInDealTimeline() {
+    const titles = findAllInAnyDocument('.crm-timeline__card-title, .crm-timeline__card-wrapper');
+    return titles.some(el => /отправлено\s+смс-сообщение/i.test((el.innerText || el.textContent || '').trim()));
+}
+
+// Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
+async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
+    if (!isRunActive(gen)) return false;
+
+    const msgTabBtn =
+        findAllInAnyDocument('#crm_scope_timeline_c_deal_13_message button.main-buttons-item-link, #crm_scope_timeline_c_deal_13_message, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"] button, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"]')
+            .find(isVisible) ||
+        findAllInAnyDocument('.main-buttons-item[data-id="message"] button, .main-buttons-item[data-id="message"]')
+            .find(isVisible);
+
+    if (!msgTabBtn) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Кнопка вкладки «Сообщение» в деталях сделки не найдена.`);
+        return false;
+    }
+
+    await loadCustomFlowState();
+    if (!isRunActive(gen)) return false;
+
+    const items = (customFlowState.flows.firstTouch && Array.isArray(customFlowState.flows.firstTouch.items))
+        ? customFlowState.flows.firstTouch.items
+        : [];
+    const firstTextItem = items.find(it => it && it.type === 'text' && String(it.text || '').trim());
+    const greetingText = firstTextItem
+        ? String(firstTextItem.text).trim()
+        : String(MESSAGE_VARIANTS.msg1[0] || '').trim();
+
+    if (!greetingText) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Нет первого текстового сообщения в сценарии.`);
+        return false;
+    }
+
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем вкладку «Сообщение» в деталях сделки...`);
+    clickLikeUser(msgTabBtn);
+    await sleep(3500);
+    if (!isRunActive(gen)) return false;
+
+    let editor = null;
+    for (let i = 0; i < 12; i++) {
+        if (!isRunActive(gen)) return false;
+        editor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"], .messageservice-message-editor__content .ui-text-editor-editable[contenteditable="true"]')
+            .find(isVisible);
+        if (editor) break;
+        await sleep(400);
+    }
+
+    if (!editor) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Поле ввода в редакторе «Сообщение» не появилось.`);
+        return false;
+    }
+
+    editor.focus();
+    await sleep(200);
+    try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, greetingText);
+    } catch (e) {
+        editor.textContent = greetingText;
+    }
+    editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    await sleep(700);
+    if (!isRunActive(gen)) return false;
+
+    const editorContainer = editor.closest('.messageservice-message-editor') || editor.parentElement?.parentElement?.parentElement || document;
+    const sendBtn = Array.from(editorContainer.querySelectorAll('button.ui-btn'))
+            .find(b => isVisible(b) && !b.disabled && /^отправить$/i.test((b.innerText || b.textContent || '').trim())) ||
+        findAllInAnyDocument('.messageservice-message-editor button.ui-btn')
+            .find(b => isVisible(b) && !b.disabled && /^отправить$/i.test((b.innerText || b.textContent || '').trim()));
+
+    if (!sendBtn) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Кнопка «Отправить» в редакторе «Сообщение» не найдена.`);
+        return false;
+    }
+
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Отправляем 1-е приветственное сообщение через «Сообщение»...`);
+    clickLikeUser(sendBtn);
+    await sleep(1500);
+    return true;
 }
 
 // Пауза 2 сек перед первым сообщением только в рассылке «Новые»:
@@ -404,7 +536,7 @@ async function scrollToFirstNonTodayCard(column, handledSet, gen) {
     return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
 }
 
-async function sendSavedFlowInBitrixChat(flowKey, gen) {
+async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
     if (!isRunActive(gen)) return;
     const runner = (typeof runBitrixFlow === 'function')
         ? runBitrixFlow
@@ -412,7 +544,7 @@ async function sendSavedFlowInBitrixChat(flowKey, gen) {
     if (!runner) {
         throw new Error("Не найдена функция runBitrixFlow (проверьте загрузку 32_bitrix_custom_flow.js).");
     }
-    await runner(flowKey, gen);
+    await runner(flowKey, gen, options);
 }
 
 async function processNextCard(gen = runGeneration) {
@@ -488,8 +620,28 @@ async function processNextCard(gen = runGeneration) {
     const chatOpened = await openBitrixChatForCard(cardId, false);
     if (!isRunActive(gen)) return;
 
+    // Если кнопка чата неактивна/заблокирована
     if (!chatOpened) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся (кнопка .crm-entity-widget-client-action-im заблокирована/недоступна) — пропускаем заявку.`);
+        if (isNewMode) {
+            if (hasSentSmsInDealTimeline()) {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] Чат неактивен, но «Отправлено СМС-сообщение» уже есть в истории — пропускаем.`);
+            } else {
+                await sendFirstGreetingViaDealSmsTab(cardId, gen);
+                if (!isRunActive(gen)) return;
+            }
+
+            await addHandledCardId(cardId);
+            if (!isRunActive(gen)) return;
+            pressEscapeEverywhere();
+            await sleep(800);
+            if (!isRunActive(gen)) return;
+            await returnToCRMAndEscape();
+            if (!isRunActive(gen)) return;
+            processNextCard(gen);
+            return;
+        }
+
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — пропускаем заявку.`);
         await addHandledCardId(cardId);
         if (!isRunActive(gen)) return;
         await closeChatAndCard();
@@ -513,6 +665,11 @@ async function processNextCard(gen = runGeneration) {
                 return;
             }
 
+            const smsAlreadySentInChat = hasOutgoingBitrixSmsInChat();
+            if (smsAlreadySentInChat) {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате найдено исходящее СМС из Битрикс24 — отправим сценарий без 1-го приветственного сообщения.`);
+            }
+
             await clickReplyIfPresentInOpenChat(cardId, gen);
             if (!isRunActive(gen)) return;
 
@@ -529,7 +686,7 @@ async function processNextCard(gen = runGeneration) {
                 return;
             }
 
-            await sendSavedFlowInBitrixChat('firstTouch', gen);
+            await sendSavedFlowInBitrixChat('firstTouch', gen, { skipFirstText: smsAlreadySentInChat });
             if (!isRunActive(gen)) return;
             await sleep(1000);
             if (!isRunActive(gen)) return;
