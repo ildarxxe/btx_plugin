@@ -309,10 +309,31 @@ async function sendBitrixChatAlbumStep(stepItem) {
     await waitAndClickAttachmentSend(caption);
 }
 
-window.loadPriceFileDataTransfer = loadPriceFileDataTransfer;
-window.fetchDefaultPriceFile = fetchDefaultPriceFile;
-window.attachFilesToBitrixChat = attachFilesToBitrixChat;
-window.waitAndClickAttachmentSend = waitAndClickAttachmentSend;
-window.sendBitrixChatText = sendBitrixChatText;
-window.sendBitrixChatFileStep = sendBitrixChatFileStep;
-window.sendBitrixChatAlbumStep = sendBitrixChatAlbumStep;
+// Алиасы на случай вызова под другими именами в сценариях или модулях
+const sendBitrixChatFile = sendBitrixChatFileStep;
+const sendBitrixChatFiles = sendBitrixChatFileStep;
+const sendBitrixChatAlbum = sendBitrixChatAlbumStep;
+const sendBitrixChatImage = sendBitrixChatAlbumStep;
+const sendBitrixChatImages = sendBitrixChatAlbumStep;
+const sendBitrixChatMessage = sendBitrixChatText;
+
+const exportedSenderApi = {
+    loadPriceFileDataTransfer,
+    fetchDefaultPriceFile,
+    attachFilesToBitrixChat,
+    waitAndClickAttachmentSend,
+    sendBitrixChatText,
+    sendBitrixChatMessage,
+    sendBitrixChatFileStep,
+    sendBitrixChatFile,
+    sendBitrixChatFiles,
+    sendBitrixChatAlbumStep,
+    sendBitrixChatAlbum,
+    sendBitrixChatImage,
+    sendBitrixChatImages
+};
+
+Object.assign(window, exportedSenderApi);
+if (typeof globalThis !== 'undefined') {
+    Object.assign(globalThis, exportedSenderApi);
+}
