@@ -1,140 +1,196 @@
 // =====================================================================================
 // МОДУЛЬ 30_bitrix_chat_sender.js
-// BITRIX-ЧАТ: ОТПРАВКА ТЕКСТА, ФАЙЛОВ И НЕСКОЛЬКИХ КАРТИНОК В ОДНОМ СООБЩЕНИИ
+// ОТПРАВКА СООБЩЕНИЙ И ФАЙЛОВ В ЧАТ BITRIX24
 // =====================================================================================
 
-async function waitEnabledInBitrix(selector, timeout) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const el = findAllInAnyDocument(selector).find(e => !e.disabled && e.getAttribute('aria-disabled') !== 'true');
-        if (el) return el;
+function findAllInAnyDocument(selector) {
+    const out = [];
+    const seen = new Set();
+    const scan = (doc) => {
+        if (!doc || seen.has(doc)) return;
+        seen.add(doc);
+        try {
+            doc.querySelectorAll(selector).forEach(el => out.push(el));
+        } catch (e) {}
+        try {
+            doc.querySelectorAll('iframe').forEach(ifr => {
+                try {
+                    if (ifr.contentDocument) scan(ifr.contentDocument);
+                } catch (e) {}
+            });
+        } catch (e) {}
+    };
+    scan(document);
+    return out;
+}
+
+function findInAnyDocument(selector) {
+    const all = findAllInAnyDocument(selector);
+    return all.find(isVisible) || all[0] || null;
+}
+
+function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0;
+}
+
+async function ensureBitrixTextareaReady(timeoutMs = 5000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        const ta = findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
+        if (ta && !ta.disabled && isVisible(ta)) return ta;
+
+        const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
+            .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
+        const replyBtn = joinBtns.find(b => /ответить/i.test((b.innerText || b.textContent || '').trim()));
+        if (replyBtn) {
+            clickLikeUser(replyBtn);
+            await sleep(800);
+            continue;
+        }
         await sleep(300);
     }
     return null;
 }
 
-async function sendBitrixChatText(text) {
-    const B = BITRIX_CHAT_SELECTORS;
-    const ta = findInAnyDocument(B.textarea);
-    if (!ta || ta.disabled) throw new Error("поле ввода недоступно (нажмите «Ответить» в чате)");
-
-    ta.focus();
-    ta.value = text;
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(rand(600, 1400));
-
-    const btn = await waitEnabledInBitrix(B.sendBtn, 3000);
-    if (btn) {
-        clickLikeUser(btn);
+function setTextareaValueLikeUser(textarea, text) {
+    textarea.focus();
+    const proto = textarea.tagName === 'TEXTAREA'
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && typeof desc.set === 'function') {
+        desc.set.call(textarea, text);
     } else {
-        console.warn("[Бот Bitrix] Кнопка отправки не активна — жмём Enter в поле ввода.");
-        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        textarea.value = text;
     }
-
-    for (let i = 0; i < 12; i++) {
-        await sleep(300);
-        const cur = findInAnyDocument(B.textarea);
-        if (!cur || !(cur.value || '').trim()) return;
-    }
-    throw new Error("сообщение не отправилось (поле ввода не очистилось)");
+    textarea.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 }
 
-function findBitrixChatFileInput(preferImages = false) {
-    const allInputs = findAllInAnyDocument('input[type="file"]').filter(i =>
-        !i.classList.contains('bx-im-chat-header__avatar_input')
-    );
-    if (preferImages) {
-        const imgInput = allInputs.find(i => /image\//i.test(i.accept || ''));
-        if (imgInput) return imgInput;
-    }
-    return allInputs.find(i => !/^\s*image\//i.test(i.accept || '')) || allInputs[0] || null;
-}
+async function sendBitrixChatText(text) {
+    const cleanText = String(text ?? '');
+    if (!cleanText.trim()) return;
 
-function base64ToFile(base64OrDataUrl, fileName, mimeType = 'application/pdf') {
-    const cleanBase64 = base64OrDataUrl.includes(',')
-        ? base64OrDataUrl.split(',')[1]
-        : base64OrDataUrl;
-    const binary = atob(cleanBase64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: mimeType });
-    return new File([blob], fileName || pickFileName(), { type: mimeType });
-}
-
-function buildDataTransferFromFiles(fileObjects) {
-    const dt = new DataTransfer();
-    for (const f of fileObjects) {
-        if (f && f.base64) {
-            dt.items.add(base64ToFile(f.base64, f.name || 'image.png', f.mimeType || 'image/png'));
-        }
-    }
-    return dt;
-}
-
-async function loadPriceFileDataTransfer(customFile = null) {
-    const dt = new DataTransfer();
-    if (customFile && customFile.base64) {
-        dt.items.add(base64ToFile(
-            customFile.base64,
-            customFile.name || pickFileName(),
-            customFile.mimeType || 'application/pdf'
-        ));
-        return dt;
-    }
-
-    const response = await fetch(PRICE_FILE_PATH);
-    if (!response.ok) {
-        throw new Error(`Не удалось загрузить price.pdf (статус ${response.status})`);
-    }
-    const blob = await response.blob();
-    dt.items.add(new File([blob], pickFileName(), { type: 'application/pdf' }));
-    return dt;
-}
-
-async function attachDataTransferToBitrix(dt, preferImages = false) {
     const B = BITRIX_CHAT_SELECTORS;
-    const ta = findInAnyDocument(B.textarea);
-    let attached = false;
+    const textarea = await ensureBitrixTextareaReady(5000);
+    if (!textarea) {
+        throw new Error("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».");
+    }
 
-    let input = findBitrixChatFileInput(preferImages);
-    if (!input) {
-        const attachBtn = findInAnyDocument(B.attachBtn);
+    setTextareaValueLikeUser(textarea, cleanText);
+    await sleep(350);
+
+    const sendBtn = findInAnyDocument(B.sendBtn);
+    const isBtnEnabled = sendBtn &&
+        !sendBtn.disabled &&
+        sendBtn.getAttribute('aria-disabled') !== 'true' &&
+        !sendBtn.classList.contains('--disabled');
+
+    if (sendBtn && isBtnEnabled) {
+        clickLikeUser(sendBtn);
+    } else {
+        textarea.focus();
+        textarea.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+        }));
+        textarea.dispatchEvent(new KeyboardEvent('keyup', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+        }));
+    }
+
+    await sleep(600);
+}
+
+function base64ToFile(dataUrlOrBase64, fileName, mimeType) {
+    const raw = String(dataUrlOrBase64 || '');
+    const commaIdx = raw.indexOf(',');
+    const b64 = commaIdx >= 0 ? raw.slice(commaIdx + 1) : raw;
+    const detectedMime = mimeType || (commaIdx >= 0 ? (raw.slice(5, commaIdx).split(';')[0] || 'application/octet-stream') : 'application/octet-stream');
+
+    const byteChars = atob(b64);
+    const byteArrays = [];
+    for (let offset = 0; offset < byteChars.length; offset += 512) {
+        const slice = byteChars.slice(offset, offset + 512);
+        const byteNumbers = new Array(slice.length);
+        for (let i = 0; i < slice.length; i++) {
+            byteNumbers[i] = slice.charCodeAt(i);
+        }
+        byteArrays.push(new Uint8Array(byteNumbers));
+    }
+
+    const blob = new Blob(byteArrays, { type: detectedMime });
+    return new File([blob], fileName || 'file', { type: detectedMime, lastModified: Date.now() });
+}
+
+async function fetchDefaultPriceFile() {
+    const resp = await fetch(PRICE_FILE_PATH + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!resp.ok) {
+        throw new Error(`Не удалось скачать дефолтный файл (${resp.status})`);
+    }
+    const blob = await resp.blob();
+    const randomName = PRICE_FILE_NAMES[Math.floor(Math.random() * PRICE_FILE_NAMES.length)] || 'price.pdf';
+    return new File([blob], randomName, { type: blob.type || 'application/pdf', lastModified: Date.now() });
+}
+
+function findBitrixFileInputs() {
+    const inputs = findAllInAnyDocument('input[type="file"]');
+    return inputs.filter(inp => inp && inp.isConnected);
+}
+
+async function attachFilesToBitrixChat(files) {
+    const fileList = Array.isArray(files) ? files.filter(Boolean) : [];
+    if (!fileList.length) {
+        throw new Error("Нет файлов для прикрепления в чат Bitrix.");
+    }
+
+    const dt = new DataTransfer();
+    fileList.forEach(f => dt.items.add(f));
+
+    let inputs = findBitrixFileInputs();
+    if (!inputs.length) {
+        const attachBtn = findInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn);
         if (attachBtn) {
             clickLikeUser(attachBtn);
-            await sleep(900);
-            input = findBitrixChatFileInput(preferImages);
-            if (!input) {
-                const items = findAllInAnyDocument('.menu-popup-item, [role="menuitem"]').filter(isVisible);
-                const pick = items.find(i => /(файл|фото|изображен|компьютер|устройств|загруз|upload|device|file|photo|image)/i.test(i.innerText || ''));
-                if (pick) {
-                    clickLikeUser(pick);
-                    await sleep(900);
-                    input = findBitrixChatFileInput(preferImages);
-                }
-            }
+            await sleep(600);
+            inputs = findBitrixFileInputs();
         }
     }
 
-    if (input) {
-        input.files = dt.files;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        attached = true;
+    if (!inputs.length) {
+        throw new Error("Не найден input[type=\"file\"] в чате Bitrix.");
     }
 
-    if (!attached && ta) {
-        ta.focus();
-        ta.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-        attached = true;
+    const targetInput = inputs[inputs.length - 1];
+    try {
+        targetInput.files = dt.files;
+    } catch (e) {
+        const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+        if (desc && typeof desc.set === 'function') {
+            desc.set.call(targetInput, dt.files);
+        }
     }
 
-    return attached;
+    targetInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    targetInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
 }
 
 async function waitAndClickAttachmentSend(captionText = '') {
     const B = BITRIX_CHAT_SELECTORS;
-    const isEnabled = b => !b.disabled && b.getAttribute('aria-disabled') !== 'true' && !b.classList.contains('--disabled');
+    const isEnabled = b => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true' && !b.classList.contains('--disabled');
     const findPreviewBtn = () => findAllInAnyDocument(B.previewSendBtn).find(isVisible) || null;
 
     const deadline = Date.now() + BITRIX_FILE_UPLOAD_WAIT_MS;
@@ -199,26 +255,37 @@ async function waitAndClickAttachmentSend(captionText = '') {
     throw new Error("файл/картинки не прикрепились или кнопка отправки не стала активной за " + Math.round(BITRIX_FILE_UPLOAD_WAIT_MS / 1000) + " сек.");
 }
 
-async function sendBitrixChatFile(preloadedDt) {
-    const dt = preloadedDt || await loadPriceFileDataTransfer();
-    await attachDataTransferToBitrix(dt, false);
+async function sendBitrixChatFileStep(stepItem) {
+    await ensureBitrixTextareaReady(5000);
+
+    let fileObj = null;
+    if (stepItem && stepItem.base64) {
+        fileObj = base64ToFile(stepItem.base64, stepItem.fileName || 'attachment', stepItem.mimeType);
+    } else {
+        fileObj = await fetchDefaultPriceFile();
+    }
+
+    await attachFilesToBitrixChat([fileObj]);
     await waitAndClickAttachmentSend('');
 }
 
-// Отправка нескольких картинок (например, 3 фото) одним заходом вместе с текстом
-async function sendBitrixChatImagesWithText(imageFileObjects, captionText = '') {
-    const validImages = (Array.isArray(imageFileObjects) ? imageFileObjects : []).filter(f => f && f.base64);
-    if (!validImages.length) {
-        if (captionText && captionText.trim()) {
-            await sendBitrixChatText(captionText.trim());
-        }
-        return;
+async function sendBitrixChatAlbumStep(stepItem) {
+    await ensureBitrixTextareaReady(5000);
+
+    const rawImages = Array.isArray(stepItem && stepItem.images) ? stepItem.images : [];
+    const files = rawImages
+        .filter(img => img && img.base64)
+        .map((img, idx) => base64ToFile(
+            img.base64,
+            img.name || `photo_${idx + 1}.jpg`,
+            img.mimeType || 'image/jpeg'
+        ));
+
+    if (!files.length) {
+        throw new Error("В блоке «Фото с текстом» не выбраны фотографии.");
     }
 
-    const dt = buildDataTransferFromFiles(validImages);
-    const attached = await attachDataTransferToBitrix(dt, true);
-    if (!attached) {
-        throw new Error("не удалось прикрепить картинки в чат Bitrix");
-    }
-    await waitAndClickAttachmentSend((captionText || '').trim());
+    const caption = String((stepItem && stepItem.text) || '').trim();
+    await attachFilesToBitrixChat(files);
+    await waitAndClickAttachmentSend(caption);
 }
