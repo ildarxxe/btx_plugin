@@ -804,7 +804,7 @@ async function processNextCard(gen = runGeneration) {
         await sleep(800);
         if (!isRunActive(gen)) return;
 
-        const moved = await moveCardToStage('touch3');
+        const moved = await moveCardToStage('touch1_target');
         if (!moved || !isRunActive(gen)) return;
 
         await addHandledCardId(cardId);

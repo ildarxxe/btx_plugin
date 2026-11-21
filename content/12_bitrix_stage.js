@@ -59,16 +59,100 @@ async function waitForStageButton(stageSelector, timeout = 8000) {
     return null;
 }
 
+function normalizeTouch1TargetStage(val) {
+    if (val === 'touch2' || val === 'C13:UC_LOXVY8') return 'touch2';
+    if (val === 'close' || val === 'won' || val === 'lose' || val === 'C13:WON' || val === 'C13:LOSE') return 'close';
+    return 'touch3';
+}
+
+function getTouch1TargetStage() {
+    const raw = (typeof BOT_CONFIG !== 'undefined' && BOT_CONFIG.touch1TargetStage) || 'touch3';
+    return normalizeTouch1TargetStage(raw);
+}
+
+async function setTouch1TargetStage(stageVal) {
+    const normalized = normalizeTouch1TargetStage(stageVal);
+    BOT_CONFIG.touch1TargetStage = normalized;
+    try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            const st = await chrome.storage.local.get([STORAGE_KEY]);
+            const prev = (st && st[STORAGE_KEY] && typeof st[STORAGE_KEY] === 'object') ? st[STORAGE_KEY] : {};
+            await chrome.storage.local.set({ [STORAGE_KEY]: { ...prev, touch1TargetStage: normalized } });
+        }
+    } catch (e) {}
+    try {
+        if (typeof GM_setValue === 'function') {
+            GM_setValue('btx_touch1_target_stage', normalized);
+        }
+    } catch (e) {}
+    console.log(`[Бот CRM] Выбрана стадия после «1 касания»: ${normalized}`);
+    if (typeof showBotToast === 'function') {
+        const labels = { touch2: '2 касание', touch3: '3 касание', close: 'Закрыть' };
+        showBotToast(`После «1 касания» → ${labels[normalized] || normalized}`);
+    }
+    return normalized;
+}
+window.setTouch1TargetStage = setTouch1TargetStage;
+window.getTouch1TargetStage = getTouch1TargetStage;
+
+async function handleCloseDealStageFlow() {
+    const closeBtn = await waitForStageButton(SELECTORS.bitrix.stageClose, 8000);
+    if (!closeBtn) {
+        console.warn('[Бот CRM] Не найдена кнопка завершения сделки [data-id="C13:WON"]');
+        showAlert('Не найдена кнопка «Завершить сделку» ([data-id="C13:WON"]).');
+        return false;
+    }
+
+    console.log('[Бот CRM] Нажимаем «Завершить сделку» (C13:WON)...');
+    triggerRealClick(closeBtn);
+
+    const outcomeDialog = await waitForElementAnyDoc(SELECTORS.bitrix.closeOutcomeDialog, 5000);
+    if (outcomeDialog) {
+        let failureBtn = null;
+        for (let i = 0; i < 12; i++) {
+            const candidates = findAllInAnyDocument(SELECTORS.bitrix.closeFailureBtn);
+            failureBtn = candidates.find(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true') || null;
+            if (failureBtn) break;
+            await sleep(300);
+        }
+
+        if (!failureBtn) {
+            console.warn('[Бот CRM] Не найдена кнопка «Закрыто и не реализовано» в диалоге завершения.');
+            showAlert('Не найдена кнопка «Закрыто и не реализовано».');
+            return false;
+        }
+
+        console.log('[Бот CRM] Нажимаем «Закрыто и не реализовано»...');
+        triggerRealClick(failureBtn);
+    }
+
+    const modalSelector = '#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm;
+    const modalForm = await waitForElementAnyDoc(modalSelector, 8000);
+    if (modalForm) {
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey: 'close' });
+    } else {
+        await sleep(1500);
+    }
+
+    return true;
+}
+
 async function moveCardToStage(stageKey) {
     await sleep(800);
+
+    const resolvedKey = stageKey === 'touch1_target' ? getTouch1TargetStage() : stageKey;
+
+    if (resolvedKey === 'close') {
+        return await handleCloseDealStageFlow();
+    }
 
     let stageSelector = SELECTORS.bitrix.stageTouch1;
     let stageName = '1 касание';
 
-    if (stageKey === 'touch3') {
+    if (resolvedKey === 'touch3') {
         stageSelector = SELECTORS.bitrix.stageTouch3;
         stageName = '3 касание';
-    } else if (stageKey === 'touch2') {
+    } else if (resolvedKey === 'touch2') {
         stageSelector = SELECTORS.bitrix.stageTouch2;
         stageName = '2 касание';
     }
@@ -86,7 +170,6 @@ async function moveCardToStage(stageKey) {
     const modalSelector = '#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm;
     let modalForm = await waitForElementAnyDoc(modalSelector, 3000);
 
-    // Если модалка не открылась с первого клика — пробуем ещё раз нажать на кнопку стадии
     if (!modalForm) {
         const freshBtn = findStageButton(stageSelector) || stageBtn;
         console.log(`[Бот CRM] Повторный клик по стадии '${stageName}'...`);
@@ -95,7 +178,7 @@ async function moveCardToStage(stageKey) {
     }
 
     if (modalForm) {
-        await fillAndSubmitModalForm({ skipNextStep: true, stageKey });
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey: resolvedKey });
     } else {
         await sleep(1500);
     }
@@ -103,19 +186,131 @@ async function moveCardToStage(stageKey) {
     return true;
 }
 
-async function finishCardAndMoveNext() {
-    try {
-        const isNewMode = BOT_CONFIG.runMode === 'new';
-        const ok = await moveCardToStage(isNewMode ? 'touch1' : 'touch3');
-        if (!ok) return;
+function normalizeTouch1TargetStage(val) {
+    if (val === 'touch2' || val === 'C13:UC_LOXVY8') return 'touch2';
+    if (val === 'close' || val === 'won' || val === 'lose' || val === 'C13:WON' || val === 'C13:LOSE') return 'close';
+    return 'touch3';
+}
 
-        await addHandledCardId(await getCurrentCardId());
-        await returnToCRMAndEscape();
-        processNextCard();
-    } catch (e) {
-        console.error("[Бот CRM] Ошибка finishCardAndMoveNext:", e);
-        showAlert("Ошибка при смене стадии. Проверьте консоль.");
+function getTouch1TargetStage() {
+    const raw = (typeof BOT_CONFIG !== 'undefined' && BOT_CONFIG.touch1TargetStage) || 'touch3';
+    return normalizeTouch1TargetStage(raw);
+}
+
+async function setTouch1TargetStage(stageVal) {
+    const normalized = normalizeTouch1TargetStage(stageVal);
+    BOT_CONFIG.touch1TargetStage = normalized;
+    try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            const st = await chrome.storage.local.get([STORAGE_KEY]);
+            const prev = (st && st[STORAGE_KEY] && typeof st[STORAGE_KEY] === 'object') ? st[STORAGE_KEY] : {};
+            await chrome.storage.local.set({ [STORAGE_KEY]: { ...prev, touch1TargetStage: normalized } });
+        }
+    } catch (e) {}
+    try {
+        if (typeof GM_setValue === 'function') {
+            GM_setValue('btx_touch1_target_stage', normalized);
+        }
+    } catch (e) {}
+    console.log(`[Бот CRM] Выбрана стадия после «1 касания»: ${normalized}`);
+    if (typeof showBotToast === 'function') {
+        const labels = { touch2: '2 касание', touch3: '3 касание', close: 'Закрыть' };
+        showBotToast(`После «1 касания» → ${labels[normalized] || normalized}`);
     }
+    return normalized;
+}
+window.setTouch1TargetStage = setTouch1TargetStage;
+window.getTouch1TargetStage = getTouch1TargetStage;
+
+async function handleCloseDealStageFlow() {
+    const closeBtn = await waitForStageButton(SELECTORS.bitrix.stageClose, 8000);
+    if (!closeBtn) {
+        console.warn('[Бот CRM] Не найдена кнопка завершения сделки [data-id="C13:WON"]');
+        showAlert('Не найдена кнопка «Завершить сделку» ([data-id="C13:WON"]).');
+        return false;
+    }
+
+    console.log('[Бот CRM] Нажимаем «Завершить сделку» (C13:WON)...');
+    triggerRealClick(closeBtn);
+
+    const outcomeDialog = await waitForElementAnyDoc(SELECTORS.bitrix.closeOutcomeDialog, 5000);
+    if (outcomeDialog) {
+        let failureBtn = null;
+        for (let i = 0; i < 12; i++) {
+            const candidates = findAllInAnyDocument(SELECTORS.bitrix.closeFailureBtn);
+            failureBtn = candidates.find(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true') || null;
+            if (failureBtn) break;
+            await sleep(300);
+        }
+
+        if (!failureBtn) {
+            console.warn('[Бот CRM] Не найдена кнопка «Закрыто и не реализовано» в диалоге завершения.');
+            showAlert('Не найдена кнопка «Закрыто и не реализовано».');
+            return false;
+        }
+
+        console.log('[Бот CRM] Нажимаем «Закрыто и не реализовано»...');
+        triggerRealClick(failureBtn);
+    }
+
+    const modalSelector = '#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm;
+    const modalForm = await waitForElementAnyDoc(modalSelector, 8000);
+    if (modalForm) {
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey: 'close' });
+    } else {
+        await sleep(1500);
+    }
+
+    return true;
+}
+
+async function moveCardToStage(stageKey) {
+    await sleep(800);
+
+    const resolvedKey = stageKey === 'touch1_target' ? getTouch1TargetStage() : stageKey;
+
+    if (resolvedKey === 'close') {
+        return await handleCloseDealStageFlow();
+    }
+
+    let stageSelector = SELECTORS.bitrix.stageTouch1;
+    let stageName = '1 касание';
+
+    if (resolvedKey === 'touch3') {
+        stageSelector = SELECTORS.bitrix.stageTouch3;
+        stageName = '3 касание';
+    } else if (resolvedKey === 'touch2') {
+        stageSelector = SELECTORS.bitrix.stageTouch2;
+        stageName = '2 касание';
+    }
+
+    const stageBtn = await waitForStageButton(stageSelector, 8000);
+    if (!stageBtn) {
+        console.warn(`[Бот CRM] Не найдена кнопка статуса '${stageName}' (${stageSelector})`);
+        showAlert(`Не найдена кнопка статуса '${stageName}' (селектор: ${stageSelector}).`);
+        return false;
+    }
+
+    console.log(`[Бот CRM] Нажимаем кнопку стадии '${stageName}'...`);
+    triggerRealClick(stageBtn);
+
+    const modalSelector = '#progressbar-entity-editor, ' + SELECTORS.bitrix.modalForm;
+    let modalForm = await waitForElementAnyDoc(modalSelector, 3000);
+
+    if (!modalForm) {
+        const freshBtn = findStageButton(stageSelector) || stageBtn;
+        console.log(`[Бот CRM] Повторный клик по стадии '${stageName}'...`);
+        triggerRealClick(freshBtn);
+        modalForm = await waitForElementAnyDoc(modalSelector, 4000);
+    }
+
+    if (modalForm) {
+        await fillAndSubmitModalForm({ skipNextStep: true, stageKey: resolvedKey });
+    } else {
+        await sleep(1500);
+    }
+
+    return true;
 }
 
 async function waitForModalField(selector, timeout = 12000, interval = 300) {

@@ -225,6 +225,58 @@
         }
     }
 
+    function mountTouch1TargetSelector() {
+        if (!location.hostname.includes('bitrix24')) return;
+        if (document.getElementById('elki-touch1-target-bar')) return;
+
+        const bar = document.createElement('div');
+        bar.id = 'elki-touch1-target-bar';
+        bar.style.cssText = [
+            'position:fixed',
+            'right:20px',
+            'bottom:72px',
+            'z-index:2147483646',
+            'background:#1c2129',
+            'color:#fff',
+            'border:1px solid #384152',
+            'border-radius:8px',
+            'padding:8px 10px',
+            'font:12px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif',
+            'box-shadow:0 4px 14px rgba(0,0,0,0.3)',
+            'display:flex',
+            'align-items:center',
+            'gap:6px'
+        ].join(';');
+
+        const lbl = document.createElement('span');
+        lbl.textContent = 'После 1 касания:';
+        lbl.style.color = '#cbd5e1';
+
+        const sel = document.createElement('select');
+        sel.style.cssText = 'background:#0f172a;color:#fff;border:1px solid #475569;border-radius:5px;padding:3px 6px;font-size:12px;';
+        sel.innerHTML = `
+        <option value="touch2">2 касание</option>
+        <option value="touch3">3 касание</option>
+        <option value="close">Закрыть</option>
+    `;
+
+        try {
+            if (typeof GM_getValue === 'function') {
+                const saved = GM_getValue('btx_touch1_target_stage');
+                if (saved) BOT_CONFIG.touch1TargetStage = normalizeTouch1TargetStage(saved);
+            }
+        } catch (e) {}
+
+        sel.value = getTouch1TargetStage();
+        sel.addEventListener('change', () => setTouch1TargetStage(sel.value));
+
+        bar.appendChild(lbl);
+        bar.appendChild(sel);
+        (document.body || document.documentElement).appendChild(bar);
+    }
+
+    setTimeout(mountTouch1TargetSelector, 1500);
+
     window.addEventListener('message', async (event) => {
         const data = event.data;
         if (!data || typeof data !== 'object' || data.source !== 'BTX_REMOTE_POPUP' || !data.payload) return;

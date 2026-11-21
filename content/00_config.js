@@ -94,6 +94,9 @@ const SELECTORS = {
         stageTouch1: '.crm-entity-section-status-step[data-id="C13:UC_QUTSPY"]',
         stageTouch2: '.crm-entity-section-status-step[data-id="C13:UC_LOXVY8"]',
         stageTouch3: '.crm-entity-section-status-step[data-id="C13:UC_VA6RW8"]',
+        stageClose: '.crm-entity-section-status-step[data-id="C13:WON"]',
+        closeOutcomeDialog: '[data-testid="crm-stage-final-transition-outcome-dialog"]',
+        closeFailureBtn: '[data-testid="crm-stage-final-transition-failure"]',
         modalForm: 'form[name*="partial_editor_form"]',
         dateInput: 'input[name="UF_CRM_1782717007483"]',
         categorySelect: '[data-name="UF_CRM_1782717199942"]',
@@ -131,6 +134,7 @@ const STORAGE_KEY = 'b24_wa_bot_state';
 
 let BOT_CONFIG = {
     runMode: 'new',
+    touch1TargetStage: 'touch3', // 'touch2' | 'touch3' | 'close'
     useTestPhone: false,
     testPhone: '87781193946',
     isPaused: false
