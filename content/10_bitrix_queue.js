@@ -1,10 +1,13 @@
 // =====================================================================================
 // МОДУЛЬ 10_bitrix_queue.js
-// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат -> при необходимости «Ответить» -> отправка)
+// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат -> пауза 2с/Esc в «Новых» -> отправка)
 // =====================================================================================
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
+const NEW_SKIP_TOAST_ID = 'elki-new-skip-banner';
 const HANDLED_CARDS_STORAGE_KEY = 'handledCardIds';
+
+let runGeneration = 0;
 
 const RUN_HOTKEYS = {
     start: {
@@ -16,6 +19,10 @@ const RUN_HOTKEYS = {
         keys: new Set(['-', '–', '—'])
     }
 };
+
+function isRunActive(gen = runGeneration) {
+    return gen === runGeneration && isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
+}
 
 function getCardId(card) {
     const direct = card.getAttribute('data-id');
@@ -60,7 +67,18 @@ async function getCurrentCardId() {
     return currentCardId;
 }
 
+function removeLeftConfirmModal() {
+    const existing = document.getElementById(LEFT_CONFIRM_MODAL_ID);
+    if (existing) existing.remove();
+}
+
+function removeNewSkipBanner() {
+    const existing = document.getElementById(NEW_SKIP_TOAST_ID);
+    if (existing) existing.remove();
+}
+
 function resetBotRuntimeState() {
+    runGeneration += 1;
     clearTimeout(idleTimer);
     idleTimer = null;
     isScriptRunning = false;
@@ -69,23 +87,29 @@ function resetBotRuntimeState() {
     cardAttempts = {};
     columnPreloaded = false;
     bitrixChatSending = false;
+    if (typeof customFlowBusy !== 'undefined') {
+        customFlowBusy = false;
+    }
     removeLeftConfirmModal();
+    removeNewSkipBanner();
 }
 
 function startAutomation() {
     resetBotRuntimeState();
+    runGeneration += 1;
+    const gen = runGeneration;
     isScriptRunning = true;
     BOT_CONFIG.isPaused = false;
     console.log(`[Бот Bitrix] Старт рассылки. Режим: ${BOT_CONFIG.runMode}`);
     if (typeof showBotToast === 'function') {
         showBotToast(`Рассылка запущена (${BOT_CONFIG.runMode === 'new' ? 'Новые' : '1 касание'}) ▶`);
     }
-    processNextCard();
+    processNextCard(gen);
 }
 
 function forceStopAutomation(reason = 'горячая клавиша остановки') {
     resetBotRuntimeState();
-    console.log(`[Бот Bitrix] Остановка рассылки: ${reason}`);
+    console.log(`[Бот Bitrix] Жёсткая остановка рассылки: ${reason}`);
     if (typeof stopBot === 'function') {
         try {
             stopBot(reason);
@@ -96,11 +120,6 @@ function forceStopAutomation(reason = 'горячая клавиша остан�
     if (typeof showBotToast === 'function') {
         showBotToast('Рассылка остановлена ⏹', true);
     }
-}
-
-function removeLeftConfirmModal() {
-    const existing = document.getElementById(LEFT_CONFIRM_MODAL_ID);
-    if (existing) existing.remove();
 }
 
 function matchesRunHotkey(event, cfg) {
@@ -157,7 +176,8 @@ function hasSelfMessagesInBitrixChat() {
     return selfMsgs.length > 0;
 }
 
-async function clickReplyIfPresentInOpenChat(cardId) {
+async function clickReplyIfPresentInOpenChat(cardId, gen) {
+    if (!isRunActive(gen)) return;
     const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
         .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
     const replyBtn = joinBtns.find(b => /ответить/i.test((b.innerText || b.textContent || '').trim()));
@@ -168,9 +188,116 @@ async function clickReplyIfPresentInOpenChat(cardId) {
     }
 }
 
-function askTouch1SendConfirmation(cardId, titleText) {
+// Пауза 2 сек перед первым сообщением только в рассылке «Новые»:
+// если нажать Esc — возвращает { skipped: true }, иначе { skipped: false }
+function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 2000) {
+    return new Promise((resolve) => {
+        removeNewSkipBanner();
+
+        if (!isRunActive(gen)) {
+            resolve({ skipped: false, aborted: true });
+            return;
+        }
+
+        const box = document.createElement('div');
+        box.id = NEW_SKIP_TOAST_ID;
+        box.style.cssText = [
+            'position:fixed',
+            'left:20px',
+            'top:25%',
+            'width:310px',
+            'z-index:2147483647',
+            'background:#1c2129',
+            'color:#fff',
+            'border:1px solid #384152',
+            'border-radius:10px',
+            'padding:12px 14px',
+            'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+            'font:13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
+        ].join(';');
+
+        box.innerHTML = `
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">Пауза перед отправкой (2 сек)</div>
+            <div style="font-size:12px;color:#cbd5e1;margin-bottom:6px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="font-size:11px;color:#fbbf24;">Нажмите <b>Esc</b>, чтобы пропустить заявку</div>
+        `;
+
+        (document.body || document.documentElement).appendChild(box);
+
+        let settled = false;
+        let timerId = null;
+        let pollId = null;
+
+        const cleanup = () => {
+            clearTimeout(timerId);
+            clearInterval(pollId);
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            try {
+                if (typeof getAllDocuments === 'function') {
+                    getAllDocuments().forEach(d => d.removeEventListener('keydown', onKeyDown, true));
+                }
+            } catch (e) {}
+            removeNewSkipBanner();
+        };
+
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        };
+
+        const onKeyDown = (e) => {
+            if (!isRunActive(gen)) {
+                finish({ skipped: false, aborted: true });
+                return;
+            }
+            if (e.key === 'Escape' || e.code === 'Escape') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                finish({ skipped: true, aborted: false });
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        try {
+            if (typeof getAllDocuments === 'function') {
+                getAllDocuments().forEach(d => d.addEventListener('keydown', onKeyDown, true));
+            }
+        } catch (e) {}
+
+        pollId = setInterval(() => {
+            if (!isRunActive(gen)) {
+                finish({ skipped: false, aborted: true });
+            }
+        }, 100);
+
+        timerId = setTimeout(() => {
+            finish({ skipped: false, aborted: false });
+        }, delayMs);
+    });
+}
+
+// После пропуска по Esc в «Новых»: 1-й Esc -> детали заявки, 2-й Esc -> общий список заявок
+async function exitChatToDetailsThenList(gen) {
+    if (!isRunActive(gen)) return;
+    pressEscapeEverywhere();
+    await sleep(700);
+    if (!isRunActive(gen)) return;
+    pressEscapeEverywhere();
+    await sleep(700);
+}
+
+function askTouch1SendConfirmation(cardId, titleText, gen) {
     return new Promise((resolve) => {
         removeLeftConfirmModal();
+
+        if (!isRunActive(gen)) {
+            resolve(null);
+            return;
+        }
 
         const box = document.createElement('div');
         box.id = LEFT_CONFIRM_MODAL_ID;
@@ -202,9 +329,12 @@ function askTouch1SendConfirmation(cardId, titleText) {
         document.body.appendChild(box);
 
         let settled = false;
+        let pollId = null;
+
         const finish = (answer) => {
             if (settled) return;
             settled = true;
+            clearInterval(pollId);
             window.removeEventListener('keydown', onKeyDown, true);
             document.removeEventListener('keydown', onKeyDown, true);
             removeLeftConfirmModal();
@@ -212,7 +342,7 @@ function askTouch1SendConfirmation(cardId, titleText) {
         };
 
         const onKeyDown = (e) => {
-            if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
+            if (!isRunActive(gen)) {
                 finish(null);
                 return;
             }
@@ -230,6 +360,12 @@ function askTouch1SendConfirmation(cardId, titleText) {
         window.addEventListener('keydown', onKeyDown, true);
         document.addEventListener('keydown', onKeyDown, true);
 
+        pollId = setInterval(() => {
+            if (!isRunActive(gen)) {
+                finish(null);
+            }
+        }, 150);
+
         const yesBtn = box.querySelector('#elki-confirm-yes');
         const noBtn = box.querySelector('#elki-confirm-no');
         if (yesBtn) yesBtn.addEventListener('click', () => finish(true));
@@ -237,9 +373,9 @@ function askTouch1SendConfirmation(cardId, titleText) {
     });
 }
 
-async function scrollToFirstNonTodayCard(column, handledSet) {
+async function scrollToFirstNonTodayCard(column, handledSet, gen) {
     for (let step = 0; step < 50; step++) {
-        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return null;
+        if (!isRunActive(gen)) return null;
 
         const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
         const candidate = cards.find(c => {
@@ -263,39 +399,44 @@ async function scrollToFirstNonTodayCard(column, handledSet) {
         await sleep(900);
     }
 
+    if (!isRunActive(gen)) return null;
     const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
     return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
 }
 
-async function sendSavedFlowInBitrixChat(flowKey) {
+async function sendSavedFlowInBitrixChat(flowKey, gen) {
+    if (!isRunActive(gen)) return;
     const runner = (typeof runBitrixFlow === 'function')
         ? runBitrixFlow
         : (typeof window.runBitrixFlow === 'function' ? window.runBitrixFlow : null);
     if (!runner) {
         throw new Error("Не найдена функция runBitrixFlow (проверьте загрузку 32_bitrix_custom_flow.js).");
     }
-    await runner(flowKey);
+    await runner(flowKey, gen);
 }
 
-async function processNextCard() {
+async function processNextCard(gen = runGeneration) {
     removeLeftConfirmModal();
+    removeNewSkipBanner();
 
     if (isStaleInstance()) {
         resetBotRuntimeState();
         return;
     }
-    if (BOT_CONFIG.isPaused || !isScriptRunning) return;
+    if (!isRunActive(gen)) return;
 
     const isNewMode = BOT_CONFIG.runMode === 'new';
     const columnSelector = isNewMode ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
     const column = document.querySelector(columnSelector);
 
     if (!column) {
+        if (!isRunActive(gen)) return;
         showAlert(`Не найдена колонка для режима '${BOT_CONFIG.runMode}'. Откройте канбан с заявками.`);
         return;
     }
 
     const handled = await getHandledCardIds();
+    if (!isRunActive(gen)) return;
     const handledSet = new Set(handled);
 
     let card = null;
@@ -303,13 +444,17 @@ async function processNextCard() {
         const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
         card = allCards.find(c => !handledSet.has(getCardId(c))) || null;
         if (!card) {
+            if (!isRunActive(gen)) return;
             console.log(`[Бот Bitrix] Новых заявок пока нет. Проверка через ${IDLE_POLL_MS / 1000} сек...`);
             clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => processNextCard(), IDLE_POLL_MS);
+            idleTimer = setTimeout(() => {
+                if (isRunActive(gen)) processNextCard(gen);
+            }, IDLE_POLL_MS);
             return;
         }
     } else {
-        card = await scrollToFirstNonTodayCard(column, handledSet);
+        card = await scrollToFirstNonTodayCard(column, handledSet, gen);
+        if (!isRunActive(gen)) return;
         if (!card) {
             alert("В колонке «1 касание» нет заявок с датой не «сегодня» для обработки.");
             resetBotRuntimeState();
@@ -322,7 +467,8 @@ async function processNextCard() {
 
     cardAttempts[cardId] = (cardAttempts[cardId] || 0) + 1;
     if (cardAttempts[cardId] > 3) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — ставим на паузу, чтобы не пропустить заявку.`);
+        if (!isRunActive(gen)) return;
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — ставим на паузу.`);
         showAlert(`Заявка ${cardId} не обработана после 3 попыток. Нажмите «Сбросить очередь» или исправьте ошибку.`);
         return;
     }
@@ -336,56 +482,81 @@ async function processNextCard() {
     console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
     clickLikeUser(cardTitleLink);
     await sleep(1600);
-    if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+    if (!isRunActive(gen)) return;
 
     console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
     const chatOpened = await openBitrixChatForCard(cardId, false);
-    if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+    if (!isRunActive(gen)) return;
 
     if (!chatOpened) {
         console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся (кнопка .crm-entity-widget-client-action-im заблокирована/недоступна) — пропускаем заявку.`);
         await addHandledCardId(cardId);
+        if (!isRunActive(gen)) return;
         await closeChatAndCard();
-        processNextCard();
+        if (!isRunActive(gen)) return;
+        processNextCard(gen);
         return;
     }
 
     await sleep(700);
+    if (!isRunActive(gen)) return;
 
     if (isNewMode) {
         try {
             if (hasSelfMessagesInBitrixChat()) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате уже есть наши сообщения — пропускаем.`);
                 await addHandledCardId(cardId);
+                if (!isRunActive(gen)) return;
                 await closeChatAndCard();
-                processNextCard();
+                if (!isRunActive(gen)) return;
+                processNextCard(gen);
                 return;
             }
 
-            await clickReplyIfPresentInOpenChat(cardId);
-            await sendSavedFlowInBitrixChat('firstTouch');
+            await clickReplyIfPresentInOpenChat(cardId, gen);
+            if (!isRunActive(gen)) return;
+
+            const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 2000);
+            if (waitRes.aborted || !isRunActive(gen)) return;
+
+            if (waitRes.skipped) {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] Пропущена по Esc перед первым сообщением.`);
+                await addHandledCardId(cardId);
+                if (!isRunActive(gen)) return;
+                await exitChatToDetailsThenList(gen);
+                if (!isRunActive(gen)) return;
+                processNextCard(gen);
+                return;
+            }
+
+            await sendSavedFlowInBitrixChat('firstTouch', gen);
+            if (!isRunActive(gen)) return;
             await sleep(1000);
-            if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+            if (!isRunActive(gen)) return;
 
             pressEscapeEverywhere();
             await sleep(800);
+            if (!isRunActive(gen)) return;
 
             const moved = await moveCardToStage('touch1');
-            if (!moved) return;
+            if (!moved || !isRunActive(gen)) return;
 
             await addHandledCardId(cardId);
+            if (!isRunActive(gen)) return;
             await returnToCRMAndEscape();
-            processNextCard();
+            if (!isRunActive(gen)) return;
+            processNextCard(gen);
         } catch (e) {
             bitrixChatSending = false;
+            if (!isRunActive(gen)) return;
             console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке новых сообщений:`, e);
             showAlert("Ошибка при отправке сообщений в чате Bitrix: " + (e && e.message ? e.message : e));
         }
         return;
     }
 
-    const answer = await askTouch1SendConfirmation(cardId, cardTitleText);
-    if (answer === null || BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
+    const answer = await askTouch1SendConfirmation(cardId, cardTitleText, gen);
+    if (answer === null || !isRunActive(gen)) {
         removeLeftConfirmModal();
         return;
     }
@@ -393,35 +564,44 @@ async function processNextCard() {
     if (!answer) {
         console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
         await addHandledCardId(cardId);
+        if (!isRunActive(gen)) return;
         await closeChatAndCard();
-        processNextCard();
+        if (!isRunActive(gen)) return;
+        processNextCard(gen);
         return;
     }
 
     try {
-        await clickReplyIfPresentInOpenChat(cardId);
-        await sendSavedFlowInBitrixChat('touch1');
+        await clickReplyIfPresentInOpenChat(cardId, gen);
+        if (!isRunActive(gen)) return;
+
+        await sendSavedFlowInBitrixChat('touch1', gen);
+        if (!isRunActive(gen)) return;
         await sleep(1000);
-        if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
+        if (!isRunActive(gen)) return;
 
         pressEscapeEverywhere();
         await sleep(800);
+        if (!isRunActive(gen)) return;
 
         const moved = await moveCardToStage('touch3');
-        if (!moved) return;
+        if (!moved || !isRunActive(gen)) return;
 
         await addHandledCardId(cardId);
+        if (!isRunActive(gen)) return;
         await returnToCRMAndEscape();
-        processNextCard();
+        if (!isRunActive(gen)) return;
+        processNextCard(gen);
     } catch (e) {
         bitrixChatSending = false;
+        if (!isRunActive(gen)) return;
         console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке 1-го касания:`, e);
         showAlert("Ошибка при отправке сообщения 1-го касания: " + (e && e.message ? e.message : e));
     }
 }
 
 function proceedToNextCardFromStorage() {
-    processNextCard();
+    processNextCard(runGeneration);
 }
 
 function isCardDateToday(card) {

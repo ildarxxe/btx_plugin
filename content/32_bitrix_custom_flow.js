@@ -113,10 +113,20 @@ function ensureBitrixChatReadyForFlow() {
     return true;
 }
 
-async function runBitrixFlow(flowKey) {
+async function runBitrixFlow(flowKey, expectedGen = null) {
+    const stillAllowed = () => {
+        if (typeof isRunActive === 'function' && expectedGen !== null) {
+            return isRunActive(expectedGen);
+        }
+        return isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
+    };
+
+    if (!stillAllowed()) return;
     if (!ensureBitrixChatReadyForFlow()) return;
 
     await loadCustomFlowState();
+    if (!stillAllowed()) return;
+
     const flow = customFlowState.flows[flowKey];
     const items = (flow && Array.isArray(flow.items)) ? flow.items : [];
 
@@ -131,6 +141,7 @@ async function runBitrixFlow(flowKey) {
     try {
         const preparedFiles = [];
         for (let i = 0; i < items.length; i++) {
+            if (!stillAllowed()) return;
             const item = items[i];
             if (item && item.type === 'file') {
                 preparedFiles[i] = await loadPriceFileDataTransfer(buildFilePayloadFromStep(item));
@@ -138,11 +149,13 @@ async function runBitrixFlow(flowKey) {
         }
 
         for (let i = 0; i < items.length; i++) {
+            if (!stillAllowed()) return;
             const item = items[i];
             if (!item || !item.type) continue;
 
             if (i > 0) {
                 await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+                if (!stillAllowed()) return;
             }
 
             if (item.type === 'text') {
@@ -161,10 +174,12 @@ async function runBitrixFlow(flowKey) {
             }
         }
 
+        if (!stillAllowed()) return;
         showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
     } catch (e) {
+        if (!stillAllowed()) return;
         console.error("[Бот Bitrix] Ошибка выполнения сценария:", e);
-        showBotToast("Ошибка: " + (e && e.message ? e.message : e), true);
+        throw e;
     } finally {
         bitrixChatSending = false;
         customFlowBusy = false;
