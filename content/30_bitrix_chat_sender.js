@@ -37,38 +37,46 @@ function isVisible(el) {
     return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0;
 }
 
-async function ensureBitrixTextareaReady(timeoutMs = 5000) {
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-        const ta = findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
-        if (ta && !ta.disabled && isVisible(ta)) return ta;
+function findAnyBitrixChatInput() {
+    const direct = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.textarea)
+        .find(el => isVisible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
+    if (direct) return direct;
 
-        const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
-            .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
-        const replyBtn = joinBtns.find(b => /ответить/i.test((b.innerText || b.textContent || '').trim()));
-        if (replyBtn) {
-            clickLikeUser(replyBtn);
-            await sleep(800);
-            continue;
-        }
-        await sleep(300);
+    const containers = findAllInAnyDocument('.bx-im-messenger, .bx-im-content-chat, .bx-im-textarea').filter(isVisible);
+    for (const box of containers) {
+        const candidate = Array.from(box.querySelectorAll('textarea, [contenteditable="true"]'))
+            .find(el => isVisible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
+        if (candidate) return candidate;
     }
+
     return null;
 }
 
-function setTextareaValueLikeUser(textarea, text) {
-    textarea.focus();
-    const proto = textarea.tagName === 'TEXTAREA'
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && typeof desc.set === 'function') {
-        desc.set.call(textarea, text);
-    } else {
-        textarea.value = text;
+function setTextareaValueLikeUser(inputEl, text) {
+    inputEl.focus();
+
+    if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
+        const proto = inputEl.tagName === 'TEXTAREA'
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (desc && typeof desc.set === 'function') {
+            desc.set.call(inputEl, text);
+        } else {
+            inputEl.value = text;
+        }
+        inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        return;
     }
-    textarea.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-    textarea.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    try {
+        inputEl.textContent = '';
+        document.execCommand('insertText', false, text);
+    } catch (e) {
+        inputEl.textContent = text;
+    }
+    inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
 }
 
 async function sendBitrixChatText(text) {
@@ -76,12 +84,12 @@ async function sendBitrixChatText(text) {
     if (!cleanText.trim()) return;
 
     const B = BITRIX_CHAT_SELECTORS;
-    const textarea = await ensureBitrixTextareaReady(5000);
-    if (!textarea) {
-        throw new Error("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».");
+    const inputEl = findAnyBitrixChatInput();
+    if (!inputEl) {
+        throw new Error("Не найдено поле ввода в открытом чате Bitrix.");
     }
 
-    setTextareaValueLikeUser(textarea, cleanText);
+    setTextareaValueLikeUser(inputEl, cleanText);
     await sleep(350);
 
     const sendBtn = findInAnyDocument(B.sendBtn);
@@ -93,8 +101,8 @@ async function sendBitrixChatText(text) {
     if (sendBtn && isBtnEnabled) {
         clickLikeUser(sendBtn);
     } else {
-        textarea.focus();
-        textarea.dispatchEvent(new KeyboardEvent('keydown', {
+        inputEl.focus();
+        inputEl.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Enter',
             code: 'Enter',
             keyCode: 13,
@@ -102,7 +110,7 @@ async function sendBitrixChatText(text) {
             bubbles: true,
             cancelable: true
         }));
-        textarea.dispatchEvent(new KeyboardEvent('keyup', {
+        inputEl.dispatchEvent(new KeyboardEvent('keyup', {
             key: 'Enter',
             code: 'Enter',
             keyCode: 13,
@@ -256,8 +264,6 @@ async function waitAndClickAttachmentSend(captionText = '') {
 }
 
 async function sendBitrixChatFileStep(stepItem) {
-    await ensureBitrixTextareaReady(5000);
-
     let fileObj = null;
     if (stepItem && stepItem.base64) {
         fileObj = base64ToFile(stepItem.base64, stepItem.fileName || 'attachment', stepItem.mimeType);
@@ -270,8 +276,6 @@ async function sendBitrixChatFileStep(stepItem) {
 }
 
 async function sendBitrixChatAlbumStep(stepItem) {
-    await ensureBitrixTextareaReady(5000);
-
     const rawImages = Array.isArray(stepItem && stepItem.images) ? stepItem.images : [];
     const files = rawImages
         .filter(img => img && img.base64)

@@ -1,13 +1,19 @@
 // =====================================================================================
 // МОДУЛЬ 10_bitrix_queue.js
-// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (рассылка напрямую в чате Bitrix без WhatsApp)
+// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат -> при необходимости «Ответить» -> отправка)
 // =====================================================================================
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
 
 const RUN_HOTKEYS = {
-    start: { ctrlKey: true, altKey: true, shiftKey: true, codes: new Set(['Equal', 'NumpadAdd', 'Plus']) },
-    stop: { ctrlKey: true, altKey: true, shiftKey: true, codes: new Set(['Minus', 'NumpadSubtract']) }
+    start: {
+        codes: new Set(['Equal', 'NumpadAdd', 'Plus']),
+        keys: new Set(['=', '+'])
+    },
+    stop: {
+        codes: new Set(['Minus', 'NumpadSubtract']),
+        keys: new Set(['-', '–', '—'])
+    }
 };
 
 function getCardId(card) {
@@ -52,7 +58,7 @@ function startAutomation() {
     resetBotRuntimeState();
     isScriptRunning = true;
     BOT_CONFIG.isPaused = false;
-    console.log(`[Бот Bitrix] Запуск рассылки в чате Bitrix. Режим: ${BOT_CONFIG.runMode}`);
+    console.log(`[Бот Bitrix] Старт рассылки. Режим: ${BOT_CONFIG.runMode}`);
     if (typeof showBotToast === 'function') {
         showBotToast(`Рассылка запущена (${BOT_CONFIG.runMode === 'new' ? 'Новые' : '1 касание'}) ▶`);
     }
@@ -61,6 +67,7 @@ function startAutomation() {
 
 function forceStopAutomation(reason = 'горячая клавиша остановки') {
     resetBotRuntimeState();
+    console.log(`[Бот Bitrix] Остановка рассылки: ${reason}`);
     if (typeof stopBot === 'function') {
         try {
             stopBot(reason);
@@ -69,7 +76,7 @@ function forceStopAutomation(reason = 'горячая клавиша остан�
         }
     }
     if (typeof showBotToast === 'function') {
-        showBotToast('Рассылка принудительно остановлена ⏹', true);
+        showBotToast('Рассылка остановлена ⏹', true);
     }
 }
 
@@ -79,14 +86,9 @@ function removeLeftConfirmModal() {
 }
 
 function matchesRunHotkey(event, cfg) {
-    if (!cfg || !cfg.codes) return false;
-    return (
-        Boolean(event.ctrlKey) === Boolean(cfg.ctrlKey) &&
-        Boolean(event.altKey) === Boolean(cfg.altKey) &&
-        Boolean(event.shiftKey) === Boolean(cfg.shiftKey) &&
-        !event.metaKey &&
-        cfg.codes.has(event.code)
-    );
+    if (!cfg) return false;
+    if (!event.ctrlKey || !event.shiftKey || event.metaKey) return false;
+    return cfg.codes.has(event.code) || cfg.keys.has(event.key);
 }
 
 function onRunControlHotkey(e) {
@@ -104,7 +106,7 @@ function onRunControlHotkey(e) {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (e.repeat) return;
-        forceStopAutomation('горячая клавиша Ctrl+Shift+Alt+-');
+        forceStopAutomation('горячая клавиша остановки');
     }
 }
 
@@ -115,6 +117,7 @@ function attachRunControlHotkeys(doc) {
 }
 
 attachRunControlHotkeys(document);
+window.addEventListener('keydown', onRunControlHotkey, true);
 try {
     if (typeof getAllDocuments === 'function') {
         getAllDocuments().forEach(attachRunControlHotkeys);
@@ -134,6 +137,18 @@ function hasSelfMessagesInBitrixChat() {
         '.bx-im-message-base__wrap.--self, .bx-im-message-list-author-group__container.--self'
     ).filter(isVisible);
     return selfMsgs.length > 0;
+}
+
+// Внутри уже открытого чата: если есть кнопка «Ответить» — нажимаем, если нет — просто идём дальше
+async function clickReplyIfPresentInOpenChat(cardId) {
+    const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
+        .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
+    const replyBtn = joinBtns.find(b => /ответить/i.test((b.innerText || b.textContent || '').trim()));
+    if (replyBtn) {
+        console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
+        clickLikeUser(replyBtn);
+        await sleep(900);
+    }
 }
 
 // Модалка слева (не перекрывает чат), ждёт Enter = Да, Esc = Нет
@@ -237,7 +252,6 @@ async function scrollToFirstNonTodayCard(column, handledSet) {
     return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
 }
 
-// Выполняет сохранённый сценарий из 32_bitrix_custom_flow.js напрямую в открытом чате Bitrix
 async function sendSavedFlowInBitrixChat(flowKey) {
     if (typeof runBitrixFlow === 'function') {
         await runBitrixFlow(flowKey);
@@ -306,12 +320,14 @@ async function processNextCard() {
     }
 
     const cardTitleText = (cardTitleLink.innerText || '').trim();
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] Открываем: ${cardTitleText}`);
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
     clickLikeUser(cardTitleLink);
     await sleep(1600);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-    const chatOpened = await openBitrixChatForCard(cardId, isNewMode);
+    // 2. Внутри открытой заявки жмём синюю кнопку «Чат» и заходим в чат
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
+    const chatOpened = await openBitrixChatForCard(cardId, false);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
     if (!chatOpened) {
@@ -322,17 +338,21 @@ async function processNextCard() {
         return;
     }
 
+    await sleep(700);
+
     if (isNewMode) {
         try {
-            await sleep(700);
+            // 3. Уже внутри чата: проверяем, есть ли наши сообщения (--self)
             if (hasSelfMessagesInBitrixChat()) {
-                console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате уже есть наши сообщения (--self) — пропускаем.`);
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате уже есть наши сообщения — пропускаем.`);
                 await addHandledCardId(cardId);
                 await closeChatAndCard();
                 processNextCard();
                 return;
             }
 
+            // 4. Если своих сообщений нет — нажимаем «Ответить» (если кнопка есть) и шлём сценарий
+            await clickReplyIfPresentInOpenChat(cardId);
             await sendSavedFlowInBitrixChat('firstTouch');
             await sleep(1000);
             if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
@@ -353,6 +373,7 @@ async function processNextCard() {
         return;
     }
 
+    // Режим «1 касание»: чат открыт, показываем модалку слева (Enter = Да, Esc = Нет)
     const answer = await askTouch1SendConfirmation(cardId, cardTitleText);
     if (answer === null || BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
         removeLeftConfirmModal();
@@ -368,6 +389,7 @@ async function processNextCard() {
     }
 
     try {
+        await clickReplyIfPresentInOpenChat(cardId);
         await sendSavedFlowInBitrixChat('touch1');
         await sleep(1000);
         if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
