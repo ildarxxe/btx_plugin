@@ -3,40 +3,6 @@
 // ОТПРАВКА СООБЩЕНИЙ И ФАЙЛОВ В ЧАТ BITRIX24
 // =====================================================================================
 
-function findAllInAnyDocument(selector) {
-    const out = [];
-    const seen = new Set();
-    const scan = (doc) => {
-        if (!doc || seen.has(doc)) return;
-        seen.add(doc);
-        try {
-            doc.querySelectorAll(selector).forEach(el => out.push(el));
-        } catch (e) {}
-        try {
-            doc.querySelectorAll('iframe').forEach(ifr => {
-                try {
-                    if (ifr.contentDocument) scan(ifr.contentDocument);
-                } catch (e) {}
-            });
-        } catch (e) {}
-    };
-    scan(document);
-    return out;
-}
-
-function findInAnyDocument(selector) {
-    const all = findAllInAnyDocument(selector);
-    return all.find(isVisible) || all[0] || null;
-}
-
-function isVisible(el) {
-    if (!el || !el.isConnected) return false;
-    const rect = el.getBoundingClientRect();
-    if (!rect || rect.width === 0 || rect.height === 0) return false;
-    const st = getComputedStyle(el);
-    return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0;
-}
-
 function findAnyBitrixChatInput() {
     const direct = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.textarea)
         .find(el => isVisible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
@@ -92,7 +58,7 @@ async function sendBitrixChatText(text) {
     setTextareaValueLikeUser(inputEl, cleanText);
     await sleep(350);
 
-    const sendBtn = findInAnyDocument(B.sendBtn);
+    const sendBtn = findAllInAnyDocument(B.sendBtn).find(isVisible) || findInAnyDocument(B.sendBtn);
     const isBtnEnabled = sendBtn &&
         !sendBtn.disabled &&
         sendBtn.getAttribute('aria-disabled') !== 'true' &&
@@ -159,7 +125,7 @@ async function loadPriceFileDataTransfer(stepItem = null) {
     if (stepItem instanceof File) {
         fileObj = stepItem;
     } else if (stepItem && stepItem.base64) {
-        fileObj = base64ToFile(stepItem.base64, stepItem.fileName || 'attachment', stepItem.mimeType);
+        fileObj = base64ToFile(stepItem.base64, stepItem.fileName || stepItem.name || 'attachment', stepItem.mimeType);
     } else {
         fileObj = await fetchDefaultPriceFile();
     }
@@ -169,9 +135,31 @@ async function loadPriceFileDataTransfer(stepItem = null) {
     return dt;
 }
 
+function isAvatarOrProfileInput(inp) {
+    if (!inp) return true;
+    const blobText = [
+        inp.id || '',
+        inp.name || '',
+        inp.className || '',
+        inp.getAttribute('data-testid') || '',
+        inp.closest('[class*="avatar"], [id*="avatar"], [data-testid*="avatar"]') ? 'avatar' : ''
+    ].join(' ').toLowerCase();
+    return blobText.includes('avatar');
+}
+
+function isInsideBitrixMessenger(el) {
+    if (!el || !el.closest) return false;
+    return Boolean(el.closest(
+        '.bx-im-messenger, .bx-im-content-chat, .bx-im-textarea, .bx-im-upload, [data-testid*="im-"]'
+    ));
+}
+
 function findBitrixFileInputs() {
-    const inputs = findAllInAnyDocument('input[type="file"]');
-    return inputs.filter(inp => inp && inp.isConnected);
+    const allInputs = findAllInAnyDocument('input[type="file"]').filter(inp => inp && inp.isConnected);
+    const chatInputs = allInputs.filter(inp => !isAvatarOrProfileInput(inp) && isInsideBitrixMessenger(inp));
+    if (chatInputs.length) return chatInputs;
+
+    return allInputs.filter(inp => !isAvatarOrProfileInput(inp));
 }
 
 async function attachFilesToBitrixChat(filesOrDataTransfer) {
@@ -191,7 +179,7 @@ async function attachFilesToBitrixChat(filesOrDataTransfer) {
 
     let inputs = findBitrixFileInputs();
     if (!inputs.length) {
-        const attachBtn = findInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn);
+        const attachBtn = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn).find(isVisible) || findInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn);
         if (attachBtn) {
             clickLikeUser(attachBtn);
             await sleep(600);
@@ -285,7 +273,7 @@ async function waitAndClickAttachmentSend(captionText = '') {
 }
 
 async function sendBitrixChatFileStep(stepItem) {
-    const dt = await loadPriceFileDataTransfer(stepItem);
+    const dt = stepItem && stepItem.files ? stepItem : await loadPriceFileDataTransfer(stepItem);
     await attachFilesToBitrixChat(dt);
     await waitAndClickAttachmentSend('');
 }
@@ -309,7 +297,10 @@ async function sendBitrixChatAlbumStep(stepItem) {
     await waitAndClickAttachmentSend(caption);
 }
 
-// Алиасы на случай вызова под другими именами в сценариях или модулях
+async function sendBitrixChatImagesWithText(images, text = '') {
+    await sendBitrixChatAlbumStep({ images, text });
+}
+
 const sendBitrixChatFile = sendBitrixChatFileStep;
 const sendBitrixChatFiles = sendBitrixChatFileStep;
 const sendBitrixChatAlbum = sendBitrixChatAlbumStep;
@@ -330,7 +321,8 @@ const exportedSenderApi = {
     sendBitrixChatAlbumStep,
     sendBitrixChatAlbum,
     sendBitrixChatImage,
-    sendBitrixChatImages
+    sendBitrixChatImages,
+    sendBitrixChatImagesWithText
 };
 
 Object.assign(window, exportedSenderApi);
