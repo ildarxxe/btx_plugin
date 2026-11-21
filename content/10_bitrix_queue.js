@@ -4,6 +4,7 @@
 // =====================================================================================
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
+const HANDLED_CARDS_STORAGE_KEY = 'handledCardIds';
 
 const RUN_HOTKEYS = {
     start: {
@@ -25,8 +26,8 @@ function getCardId(card) {
 }
 
 async function getHandledCardIds() {
-    const st = await chrome.storage.local.get(['handledCardIds']);
-    return Array.isArray(st.handledCardIds) ? st.handledCardIds : [];
+    const st = await chrome.storage.local.get([HANDLED_CARDS_STORAGE_KEY]);
+    return Array.isArray(st[HANDLED_CARDS_STORAGE_KEY]) ? st[HANDLED_CARDS_STORAGE_KEY] : [];
 }
 
 async function addHandledCardId(id) {
@@ -34,9 +35,26 @@ async function addHandledCardId(id) {
     const list = await getHandledCardIds();
     if (!list.includes(id)) {
         list.push(id);
-        await chrome.storage.local.set({ handledCardIds: list });
+        await chrome.storage.local.set({ [HANDLED_CARDS_STORAGE_KEY]: list });
     }
 }
+
+async function resetQueue() {
+    currentCardId = null;
+    cardAttempts = {};
+    columnPreloaded = false;
+    await chrome.storage.local.set({ [HANDLED_CARDS_STORAGE_KEY]: [] });
+    try {
+        if (typeof GM_setValue === 'function') {
+            GM_setValue(HANDLED_CARDS_STORAGE_KEY, []);
+        }
+    } catch (e) {}
+    console.log('[Бот Bitrix] Очередь заявок сброшена (handledCardIds и cardAttempts очищены).');
+    if (typeof showBotToast === 'function') {
+        showBotToast('Очередь заявок сброшена 🔄');
+    }
+}
+window.resetQueue = resetQueue;
 
 async function getCurrentCardId() {
     return currentCardId;
@@ -139,7 +157,6 @@ function hasSelfMessagesInBitrixChat() {
     return selfMsgs.length > 0;
 }
 
-// Внутри уже открытого чата: если есть кнопка «Ответить» — нажимаем, если нет — просто идём дальше
 async function clickReplyIfPresentInOpenChat(cardId) {
     const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
         .filter(b => isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
@@ -151,7 +168,6 @@ async function clickReplyIfPresentInOpenChat(cardId) {
     }
 }
 
-// Модалка слева (не перекрывает чат), ждёт Enter = Да, Esc = Нет
 function askTouch1SendConfirmation(cardId, titleText) {
     return new Promise((resolve) => {
         removeLeftConfirmModal();
@@ -221,7 +237,6 @@ function askTouch1SendConfirmation(cardId, titleText) {
     });
 }
 
-// Прокручивает колонку «1 касание» вниз до первой заявки с датой не «сегодня»
 async function scrollToFirstNonTodayCard(column, handledSet) {
     for (let step = 0; step < 50; step++) {
         if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return null;
@@ -253,11 +268,13 @@ async function scrollToFirstNonTodayCard(column, handledSet) {
 }
 
 async function sendSavedFlowInBitrixChat(flowKey) {
-    if (typeof runBitrixFlow === 'function') {
-        await runBitrixFlow(flowKey);
-        return;
+    const runner = (typeof runBitrixFlow === 'function')
+        ? runBitrixFlow
+        : (typeof window.runBitrixFlow === 'function' ? window.runBitrixFlow : null);
+    if (!runner) {
+        throw new Error("Не найдена функция runBitrixFlow (проверьте загрузку 32_bitrix_custom_flow.js).");
     }
-    throw new Error("Модуль 32_bitrix_custom_flow.js не подключён.");
+    await runner(flowKey);
 }
 
 async function processNextCard() {
@@ -305,17 +322,13 @@ async function processNextCard() {
 
     cardAttempts[cardId] = (cardAttempts[cardId] || 0) + 1;
     if (cardAttempts[cardId] > 3) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — пропускаем.`);
-        await addHandledCardId(cardId);
-        await closeChatAndCard();
-        processNextCard();
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — ставим на паузу, чтобы не пропустить заявку.`);
+        showAlert(`Заявка ${cardId} не обработана после 3 попыток. Нажмите «Сбросить очередь» или исправьте ошибку.`);
         return;
     }
 
     const cardTitleLink = card.querySelector('.crm-kanban-item-title');
     if (!cardTitleLink) {
-        await addHandledCardId(cardId);
-        processNextCard();
         return;
     }
 
@@ -325,16 +338,13 @@ async function processNextCard() {
     await sleep(1600);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
-    // 2. Внутри открытой заявки жмём синюю кнопку «Чат» и заходим в чат
     console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
     const chatOpened = await openBitrixChatForCard(cardId, false);
     if (BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) return;
 
     if (!chatOpened) {
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — пропускаем заявку.`);
-        await addHandledCardId(cardId);
-        await closeChatAndCard();
-        processNextCard();
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — оставляем заявку в очереди и ставим на паузу.`);
+        showAlert(`Не удалось открыть чат для заявки ${cardId}. Заявка не помечена как обработанная.`);
         return;
     }
 
@@ -342,7 +352,6 @@ async function processNextCard() {
 
     if (isNewMode) {
         try {
-            // 3. Уже внутри чата: проверяем, есть ли наши сообщения (--self)
             if (hasSelfMessagesInBitrixChat()) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате уже есть наши сообщения — пропускаем.`);
                 await addHandledCardId(cardId);
@@ -351,7 +360,6 @@ async function processNextCard() {
                 return;
             }
 
-            // 4. Если своих сообщений нет — нажимаем «Ответить» (если кнопка есть) и шлём сценарий
             await clickReplyIfPresentInOpenChat(cardId);
             await sendSavedFlowInBitrixChat('firstTouch');
             await sleep(1000);
@@ -367,13 +375,13 @@ async function processNextCard() {
             await returnToCRMAndEscape();
             processNextCard();
         } catch (e) {
+            bitrixChatSending = false;
             console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке новых сообщений:`, e);
             showAlert("Ошибка при отправке сообщений в чате Bitrix: " + (e && e.message ? e.message : e));
         }
         return;
     }
 
-    // Режим «1 касание»: чат открыт, показываем модалку слева (Enter = Да, Esc = Нет)
     const answer = await askTouch1SendConfirmation(cardId, cardTitleText);
     if (answer === null || BOT_CONFIG.isPaused || !isScriptRunning || isStaleInstance()) {
         removeLeftConfirmModal();
@@ -404,6 +412,7 @@ async function processNextCard() {
         await returnToCRMAndEscape();
         processNextCard();
     } catch (e) {
+        bitrixChatSending = false;
         console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке 1-го касания:`, e);
         showAlert("Ошибка при отправке сообщения 1-го касания: " + (e && e.message ? e.message : e));
     }

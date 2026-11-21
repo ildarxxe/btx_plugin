@@ -43,7 +43,6 @@
     function createSidebarUI() {
         if (document.getElementById(TOGGLE_ID)) return;
 
-        // Ярлык сбоку экрана для открытия/скрытия панели
         const toggleBtn = document.createElement('button');
         toggleBtn.id = TOGGLE_ID;
         toggleBtn.type = 'button';
@@ -66,7 +65,6 @@
             'box-shadow:-2px 2px 10px rgba(0,0,0,0.2)'
         ].join(';');
 
-        // Выдвижная боковая панель
         const drawer = document.createElement('div');
         drawer.id = DRAWER_ID;
         drawer.style.cssText = [
@@ -84,7 +82,6 @@
             'flex-direction:column'
         ].join(';');
 
-        // Верхняя планка управления панелью
         const topBar = document.createElement('div');
         topBar.style.cssText = [
             'display:flex',
@@ -101,6 +98,25 @@
 
         const controlsWrap = document.createElement('div');
         controlsWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+        const resetQueueBtn = document.createElement('button');
+        resetQueueBtn.type = 'button';
+        resetQueueBtn.textContent = 'Сбросить очередь';
+        resetQueueBtn.title = 'Очистить список уже обработанных заявок и счётчик попыток';
+        resetQueueBtn.style.cssText = [
+            'padding:3px 7px',
+            'border:1px solid #d69e2e',
+            'border-radius:4px',
+            'background:#b7791f',
+            'color:#fff',
+            'font-size:11px',
+            'cursor:pointer'
+        ].join(';');
+        resetQueueBtn.addEventListener('click', async () => {
+            if (typeof resetQueue === 'function') {
+                await resetQueue();
+            }
+        });
 
         const popoutBtn = document.createElement('button');
         popoutBtn.type = 'button';
@@ -138,7 +154,7 @@
         ].join(';');
         closeBtn.addEventListener('click', () => setDrawerOpen(false));
 
-        controlsWrap.append(popoutBtn, closeBtn);
+        controlsWrap.append(resetQueueBtn, popoutBtn, closeBtn);
         topBar.append(titleSpan, controlsWrap);
 
         const iframe = document.createElement('iframe');
@@ -209,7 +225,6 @@
         }
     }
 
-    // Принимаем команды из встроенного iframe панели на странице Bitrix24
     window.addEventListener('message', async (event) => {
         const data = event.data;
         if (!data || typeof data !== 'object' || data.source !== 'BTX_REMOTE_POPUP' || !data.payload) return;
@@ -218,6 +233,13 @@
 
         if (payload.action === 'LOAD_POPUP_STATE') {
             await sendStateToDrawerFrame();
+            return;
+        }
+
+        if (payload.action === 'RESET_QUEUE') {
+            if (typeof resetQueue === 'function') {
+                await resetQueue();
+            }
             return;
         }
 
@@ -256,7 +278,6 @@
         }
     });
 
-    // Сразу при загрузке страницы Bitrix24 подтягиваем сохранённую колонку
     BOT_CONFIG.runMode = readSavedRunMode();
 
     if (document.readyState === 'loading') {

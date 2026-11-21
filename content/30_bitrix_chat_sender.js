@@ -308,3 +308,11 @@ async function sendBitrixChatAlbumStep(stepItem) {
     await attachFilesToBitrixChat(files);
     await waitAndClickAttachmentSend(caption);
 }
+
+window.loadPriceFileDataTransfer = loadPriceFileDataTransfer;
+window.fetchDefaultPriceFile = fetchDefaultPriceFile;
+window.attachFilesToBitrixChat = attachFilesToBitrixChat;
+window.waitAndClickAttachmentSend = waitAndClickAttachmentSend;
+window.sendBitrixChatText = sendBitrixChatText;
+window.sendBitrixChatFileStep = sendBitrixChatFileStep;
+window.sendBitrixChatAlbumStep = sendBitrixChatAlbumStep;
