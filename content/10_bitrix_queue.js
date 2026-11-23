@@ -269,27 +269,55 @@ function dealHasClientPhoneNumber() {
 }
 
 // Однократная вставка текста в редактор «Сообщение» без дублирования
+// Однократная вставка текста в Lexical-редактор «Сообщение» без дублирования
 function insertSingleTextIntoSmsEditor(editor, text) {
     const cleanText = String(text || '').trim();
+    if (!editor || !cleanText) return false;
+
     const doc = editor.ownerDocument || document;
     const win = doc.defaultView || window;
-    const targetNode = editor.querySelector('p') || editor;
+
+    let pEl = editor.querySelector('p');
+    if (!pEl) {
+        pEl = doc.createElement('p');
+        pEl.className = 'ui-typography-paragraph ui-text-editor__paragraph';
+        pEl.setAttribute('dir', 'auto');
+        editor.innerHTML = '';
+        editor.appendChild(pEl);
+    }
 
     editor.focus();
     try {
-        targetNode.focus();
+        pEl.focus();
     } catch (e) {}
 
-    const range = doc.createRange();
-    range.selectNodeContents(targetNode);
-    range.collapse(false);
-    const sel = win.getSelection && win.getSelection();
-    if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
+    try {
+        const range = doc.createRange();
+        range.selectNodeContents(pEl);
+        range.collapse(false);
+        const sel = win.getSelection && win.getSelection();
+        if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+    } catch (e) {}
+
+    // Удаляем класс placeholder --shown, если он мешает редактору принять ввод
+    const placeholder = editor.parentElement && editor.parentElement.querySelector('.ui-text-editor-placeholder');
+    if (placeholder) {
+        placeholder.classList.remove('--shown');
     }
 
-    // Сначала пытаемся вставить через execCommand; Lexical сам сгенерирует нужные события
+    try {
+        editor.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'insertText',
+            data: cleanText
+        }));
+    } catch (e) {}
+
     let insertedByExec = false;
     try {
         insertedByExec = Boolean(doc.execCommand('insertText', false, cleanText));
@@ -297,17 +325,23 @@ function insertSingleTextIntoSmsEditor(editor, text) {
         insertedByExec = false;
     }
 
-    const currentText = (editor.innerText || editor.textContent || '').trim();
-    if (!insertedByExec || !currentText) {
-        if (editor.querySelector('p')) {
-            editor.querySelector('p').textContent = cleanText;
-        } else {
-            editor.textContent = cleanText;
-        }
+    let actualText = (editor.innerText || editor.textContent || '').trim();
+    if (!insertedByExec || !actualText) {
+        pEl.textContent = cleanText;
+        editor.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'insertText',
+            data: cleanText
+        }));
         editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     }
 
     editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    actualText = (editor.innerText || editor.textContent || '').trim();
+    return actualText.length > 0;
 }
 
 // Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
@@ -360,10 +394,16 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
-    insertSingleTextIntoSmsEditor(editor, greetingText);
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в поле ввода «Сообщение»:`, JSON.stringify((editor.innerText || '').trim()));
+    const okInsert = insertSingleTextIntoSmsEditor(editor, greetingText);
+    const currentVal = (editor.innerText || editor.textContent || '').trim();
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Вставка в «Сообщение» (ok=${okInsert}):`, JSON.stringify(currentVal));
 
-    await sleep(900);
+    if (!okInsert || !currentVal) {
+        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Не удалось вставить текст в поле «Сообщение».`);
+        return false;
+    }
+
+    await sleep(1000);
     if (!isRunActive(gen)) return false;
 
     const doc = editor.ownerDocument || document;
@@ -378,7 +418,9 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
             const btns = Array.from(scope.querySelectorAll('button, [role="button"], .ui-btn'));
             const match = btns.find(b => {
                 if (!isVisible(b)) return false;
-                if (b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('--disabled')) return false;
+                if (b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('--disabled') || b.classList.contains('ui-btn-disabled')) {
+                    return false;
+                }
                 const txt = (b.innerText || b.textContent || '').trim();
                 return /^отправить$/i.test(txt);
             });
@@ -388,11 +430,11 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     };
 
     let sendBtn = null;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
         if (!isRunActive(gen)) return false;
         sendBtn = findSmsSendBtn();
         if (sendBtn) break;
-        await sleep(300);
+        await sleep(350);
     }
 
     if (!sendBtn) {
@@ -400,7 +442,7 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] Отправляем 1-е приветственное сообщение через «Сообщение»...`);
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Отправить» в редакторе «Сообщение»...`);
     clickLikeUser(sendBtn);
     await sleep(1800);
     return true;
