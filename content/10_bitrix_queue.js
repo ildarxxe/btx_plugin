@@ -6,6 +6,7 @@
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
 const NEW_SKIP_TOAST_ID = 'elki-new-skip-banner';
 const HANDLED_CARDS_STORAGE_KEY = 'handledCardIds';
+const TOUCH1_TARGET_STORAGE_KEY = 'btx_touch1_target_stage';
 
 let runGeneration = 0;
 
@@ -239,6 +240,76 @@ function hasSentSmsInDealTimeline() {
     return titles.some(el => /отправлено\s+смс-сообщение/i.test((el.innerText || el.textContent || '').trim()));
 }
 
+// Проверяем, есть ли в деталях сделки реальный номер телефона клиента
+function dealHasClientPhoneNumber() {
+    const phoneEls = findAllInAnyDocument(
+        `${SELECTORS.bitrix.phoneWidget}, a[href^="tel:"], [data-cid="PHONE"] .crm-entity-widget-content-block-inner`
+    );
+
+    for (const el of phoneEls) {
+        const href = (el.getAttribute && el.getAttribute('href')) || '';
+        const raw = href.startsWith('tel:') ? href.slice(4) : (el.innerText || el.textContent || '');
+        const digits = String(raw).replace(/\D/g, '');
+        if (digits.length >= 7) {
+            return true;
+        }
+    }
+
+    const clientBlocks = findAllInAnyDocument('.crm-entity-widget-client-block, .crm-entity-widget-content-block-inner-phone');
+    for (const block of clientBlocks) {
+        const txt = (block.innerText || block.textContent || '');
+        const phoneMatch = txt.match(/(?:\+?\d[\d\s\-()]{6,}\d)/);
+        if (phoneMatch) {
+            const digits = phoneMatch[0].replace(/\D/g, '');
+            if (digits.length >= 7) return true;
+        }
+    }
+
+    return false;
+}
+
+// Однократная вставка текста в редактор «Сообщение» без дублирования
+function insertSingleTextIntoSmsEditor(editor, text) {
+    const cleanText = String(text || '').trim();
+    const doc = editor.ownerDocument || document;
+    const win = doc.defaultView || window;
+    const targetNode = editor.querySelector('p') || editor;
+
+    editor.focus();
+    try {
+        targetNode.focus();
+    } catch (e) {}
+
+    const range = doc.createRange();
+    range.selectNodeContents(targetNode);
+    range.collapse(false);
+    const sel = win.getSelection && win.getSelection();
+    if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+
+    // Сначала пытаемся вставить через execCommand; Lexical сам сгенерирует нужные события
+    let insertedByExec = false;
+    try {
+        insertedByExec = Boolean(doc.execCommand('insertText', false, cleanText));
+    } catch (e) {
+        insertedByExec = false;
+    }
+
+    const currentText = (editor.innerText || editor.textContent || '').trim();
+    if (!insertedByExec || !currentText) {
+        if (editor.querySelector('p')) {
+            editor.querySelector('p').textContent = cleanText;
+        } else {
+            editor.textContent = cleanText;
+        }
+        editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+
+    editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+}
+
 // Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
 async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     if (!isRunActive(gen)) return false;
@@ -289,61 +360,13 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
-    const doc = editor.ownerDocument || document;
-    const win = doc.defaultView || window;
-    const targetNode = editor.querySelector('p') || editor;
-
-    editor.focus();
-    if (typeof targetNode.focus === 'function') {
-        try { targetNode.focus(); } catch (e) {}
-    }
-
-    const range = doc.createRange();
-    range.selectNodeContents(targetNode);
-    range.collapse(false);
-    const sel = win.getSelection && win.getSelection();
-    if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-    }
-
-    let inserted = false;
-    try {
-        inserted = Boolean(doc.execCommand('insertText', false, greetingText));
-    } catch (e) {
-        inserted = false;
-    }
-
-    const currentTextAfterInsert = (editor.innerText || editor.textContent || '').trim();
-    if (!inserted || !currentTextAfterInsert) {
-        if (editor.querySelector('p')) {
-            editor.querySelector('p').textContent = greetingText;
-        } else {
-            editor.textContent = greetingText;
-        }
-    }
-
-    editor.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: 'insertText',
-        data: greetingText
-    }));
-    editor.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: 'insertText',
-        data: greetingText
-    }));
-    editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в поле ввода:`, JSON.stringify((editor.innerText || '').trim()));
+    insertSingleTextIntoSmsEditor(editor, greetingText);
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в поле ввода «Сообщение»:`, JSON.stringify((editor.innerText || '').trim()));
 
     await sleep(900);
     if (!isRunActive(gen)) return false;
 
+    const doc = editor.ownerDocument || document;
     const findSmsSendBtn = () => {
         const scopes = [
             editor.closest('.messageservice-message-editor'),
@@ -511,14 +534,19 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
             'font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
         ].join(';');
 
+        const targetLabels = { touch2: '2 касание', touch3: '3 касание', close: 'Закрыть' };
+        const currentTarget = (typeof getTouch1TargetStage === 'function') ? getTouch1TargetStage() : 'touch3';
+        const targetText = targetLabels[currentTarget] || '3 касание';
+
         box.innerHTML = `
             <div style="font-weight:700;font-size:14px;margin-bottom:6px;">1 касание — делать рассылку?</div>
-            <div style="font-size:12px;color:#cbd5e1;margin-bottom:12px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="font-size:12px;color:#cbd5e1;margin-bottom:8px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="font-size:11px;color:#93c5fd;margin-bottom:10px;">После отправки → <b>${targetText}</b></div>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
                 <button id="elki-confirm-yes" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;cursor:pointer;">Да (Enter)</button>
                 <button id="elki-confirm-no" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Нет (Esc)</button>
             </div>
-            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и в «3 касание» · Esc — закрыть и пропустить</div>
+            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и перевести · Esc — закрыть и пропустить</div>
         `;
 
         document.body.appendChild(box);
@@ -758,7 +786,13 @@ async function processNextCard(gen = runGeneration) {
             await sleep(800);
             if (!isRunActive(gen)) return;
 
-            const moved = await moveCardToStage('touch1');
+            const hasPhone = dealHasClientPhoneNumber();
+            const targetStageForNew = hasPhone ? 'touch1' : 'close';
+            if (!hasPhone) {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] Номер телефона в деталях не найден (Instagram/соцсеть без номера) — закрываем сделку.`);
+            }
+
+            const moved = await moveCardToStage(targetStageForNew);
             if (!moved || !isRunActive(gen)) return;
 
             await addHandledCardId(cardId);

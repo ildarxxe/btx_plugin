@@ -372,30 +372,36 @@ async function fillAndSubmitModalForm(opts = {}) {
         return;
     }
 
-    await sleep(600);
+    const isClose = opts && opts.stageKey === 'close';
+    await sleep(isClose ? 900 : 600);
 
-    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, 1500);
+    // 1. Дата взятия заявки
+    const dateInput = await waitForModalField(SELECTORS.bitrix.dateInput, isClose ? 2500 : 1500);
     if (dateInput) {
         dateInput.value = getFormattedTodayDate();
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
         dateInput.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, 1000);
+    // 2. Тип товара / категория («Уличные елки»)
+    const categoryFresh = await waitForModalField(SELECTORS.bitrix.categorySelect, isClose ? 2000 : 1000);
     if (categoryFresh) {
         await selectDropdownOption(categoryFresh, "Уличные елки");
     }
 
-    const qualEl = await waitForModalField('[data-name="UF_CRM_1782716466581"]', 2000);
+    // 3. Квалификация («CCC»)
+    const qualEl = await waitForModalField('[data-name="UF_CRM_1782716466581"]', isClose ? 2500 : 2000);
     if (qualEl) {
         await selectDropdownOption(qualEl, "CCC");
     }
 
-    const clientTypeEl = await waitForModalField('[data-name="UF_CRM_1782799322263"]', 1000);
+    // 4. Тип клиента («B2C»)
+    const clientTypeEl = await waitForModalField('[data-name="UF_CRM_1782799322263"]', isClose ? 2000 : 1000);
     if (clientTypeEl) {
         await selectDropdownOption(clientTypeEl, "B2C");
     }
 
+    // 5. Источник («Неизвестный источник»)
     await fillSourceFieldIfPresent();
     await sleep(600);
 
