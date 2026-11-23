@@ -6,7 +6,6 @@
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
 const NEW_SKIP_TOAST_ID = 'elki-new-skip-banner';
 const HANDLED_CARDS_STORAGE_KEY = 'handledCardIds';
-const TOUCH1_TARGET_STORAGE_KEY = 'btx_touch1_target_stage';
 
 let runGeneration = 0;
 
@@ -220,16 +219,16 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
         return null;
     };
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
         if (!isRunActive(gen)) return false;
         const replyBtn = findReplyBtn();
         if (replyBtn) {
             console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
             clickLikeUser(replyBtn);
-            await sleep(900);
+            await sleep(500);
             return true;
         }
-        await sleep(350);
+        await sleep(200);
     }
     return false;
 }
@@ -269,10 +268,12 @@ function dealHasClientPhoneNumber() {
 }
 
 // Однократная вставка текста в редактор «Сообщение» без дублирования
-// Однократная вставка текста в Lexical-редактор «Сообщение» без дублирования
 function insertSingleTextIntoSmsEditor(editor, text) {
     const cleanText = String(text || '').trim();
     if (!editor || !cleanText) return false;
+
+    const readText = () => (editor.innerText || editor.textContent || '').replace(/\u200B/g, '').trim();
+    if (readText() === cleanText) return true;
 
     const doc = editor.ownerDocument || document;
     const win = doc.defaultView || window;
@@ -287,9 +288,7 @@ function insertSingleTextIntoSmsEditor(editor, text) {
     }
 
     editor.focus();
-    try {
-        pEl.focus();
-    } catch (e) {}
+    try { pEl.focus(); } catch (e) {}
 
     try {
         const range = doc.createRange();
@@ -302,46 +301,51 @@ function insertSingleTextIntoSmsEditor(editor, text) {
         }
     } catch (e) {}
 
-    // Удаляем класс placeholder --shown, если он мешает редактору принять ввод
     const placeholder = editor.parentElement && editor.parentElement.querySelector('.ui-text-editor-placeholder');
-    if (placeholder) {
-        placeholder.classList.remove('--shown');
-    }
+    if (placeholder) placeholder.classList.remove('--shown');
 
+    // Пробуем вставить через paste с text/plain (Lexical обрабатывает это как единый блок)
+    let pasted = false;
     try {
-        editor.dispatchEvent(new InputEvent('beforeinput', {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            inputType: 'insertText',
-            data: cleanText
-        }));
-    } catch (e) {}
-
-    let insertedByExec = false;
-    try {
-        insertedByExec = Boolean(doc.execCommand('insertText', false, cleanText));
+        if (typeof ClipboardEvent === 'function' && typeof DataTransfer === 'function') {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', cleanText);
+            editor.dispatchEvent(new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dt
+            }));
+            if (readText() === cleanText) {
+                pasted = true;
+            }
+        }
     } catch (e) {
-        insertedByExec = false;
+        pasted = false;
     }
 
-    let actualText = (editor.innerText || editor.textContent || '').trim();
-    if (!insertedByExec || !actualText) {
-        pEl.textContent = cleanText;
-        editor.dispatchEvent(new InputEvent('input', {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            inputType: 'insertText',
-            data: cleanText
-        }));
-        editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    if (!pasted) {
+        // Если paste не вставил — сбрасываем пустой абзац и делаем один execCommand('insertText')
+        pEl.innerHTML = '<br data-lexical-managed-linebreak="true">';
+        try {
+            const range = doc.createRange();
+            range.setStart(pEl, 0);
+            range.collapse(true);
+            const sel = win.getSelection && win.getSelection();
+            if (sel) {
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+            doc.execCommand('insertText', false, cleanText);
+        } catch (e) {}
+
+        if (!readText()) {
+            pEl.textContent = cleanText;
+            editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        }
     }
 
     editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-
-    actualText = (editor.innerText || editor.textContent || '').trim();
-    return actualText.length > 0;
+    return readText().length > 0;
 }
 
 // Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
@@ -377,16 +381,14 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
 
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем вкладку «Сообщение» в деталях сделки...`);
     clickLikeUser(msgTabBtn);
-    await sleep(3500);
-    if (!isRunActive(gen)) return false;
 
     let editor = null;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
         if (!isRunActive(gen)) return false;
         editor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"], .messageservice-message-editor__content .ui-text-editor-editable[contenteditable="true"]')
             .find(isVisible);
         if (editor) break;
-        await sleep(400);
+        await sleep(250);
     }
 
     if (!editor) {
@@ -394,17 +396,17 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
+    await sleep(250);
+    if (!isRunActive(gen)) return false;
+
     const okInsert = insertSingleTextIntoSmsEditor(editor, greetingText);
-    const currentVal = (editor.innerText || editor.textContent || '').trim();
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] Вставка в «Сообщение» (ok=${okInsert}):`, JSON.stringify(currentVal));
+    const currentVal = (editor.innerText || editor.textContent || '').replace(/\u200B/g, '').trim();
+    console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в «Сообщение» (ok=${okInsert}):`, JSON.stringify(currentVal));
 
     if (!okInsert || !currentVal) {
         console.warn(`[Бот Bitrix] [Заявка ${cardId}] Не удалось вставить текст в поле «Сообщение».`);
         return false;
     }
-
-    await sleep(1000);
-    if (!isRunActive(gen)) return false;
 
     const doc = editor.ownerDocument || document;
     const findSmsSendBtn = () => {
@@ -430,11 +432,11 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     };
 
     let sendBtn = null;
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 15; i++) {
         if (!isRunActive(gen)) return false;
         sendBtn = findSmsSendBtn();
         if (sendBtn) break;
-        await sleep(350);
+        await sleep(200);
     }
 
     if (!sendBtn) {
@@ -444,7 +446,18 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
 
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Отправить» в редакторе «Сообщение»...`);
     clickLikeUser(sendBtn);
-    await sleep(1800);
+
+    // Ждём отправки (очистки/скрытия редактора) до 4 сек
+    for (let i = 0; i < 16; i++) {
+        if (!isRunActive(gen)) return false;
+        await sleep(250);
+        const stillEditor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"]').find(isVisible);
+        const txtNow = stillEditor ? (stillEditor.innerText || stillEditor.textContent || '').trim() : '';
+        if (!stillEditor || !txtNow) {
+            break;
+        }
+    }
+
     return true;
 }
 
@@ -544,10 +557,10 @@ function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 2000
 async function exitChatToDetailsThenList(gen) {
     if (!isRunActive(gen)) return;
     pressEscapeEverywhere();
-    await sleep(700);
+    await sleep(600);
     if (!isRunActive(gen)) return;
     pressEscapeEverywhere();
-    await sleep(700);
+    await sleep(600);
 }
 
 function askTouch1SendConfirmation(cardId, titleText, gen) {
@@ -649,7 +662,7 @@ async function scrollToFirstNonTodayCard(column, handledSet, gen) {
         });
         if (candidate) {
             candidate.scrollIntoView({ block: 'center' });
-            await sleep(400);
+            await sleep(300);
             return candidate;
         }
 
@@ -661,7 +674,7 @@ async function scrollToFirstNonTodayCard(column, handledSet, gen) {
         if (cards.length) {
             cards[cards.length - 1].scrollIntoView({ block: 'end' });
         }
-        await sleep(900);
+        await sleep(700);
     }
 
     if (!isRunActive(gen)) return null;
@@ -746,7 +759,7 @@ async function processNextCard(gen = runGeneration) {
     const cardTitleText = (cardTitleLink.innerText || '').trim();
     console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
     clickLikeUser(cardTitleLink);
-    await sleep(1600);
+    await sleep(900);
     if (!isRunActive(gen)) return;
 
     console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
@@ -766,7 +779,7 @@ async function processNextCard(gen = runGeneration) {
             await addHandledCardId(cardId);
             if (!isRunActive(gen)) return;
             pressEscapeEverywhere();
-            await sleep(800);
+            await sleep(500);
             if (!isRunActive(gen)) return;
             await returnToCRMAndEscape();
             if (!isRunActive(gen)) return;
@@ -783,7 +796,7 @@ async function processNextCard(gen = runGeneration) {
         return;
     }
 
-    await sleep(700);
+    await sleep(250);
     if (!isRunActive(gen)) return;
 
     if (isNewMode) {
@@ -803,9 +816,7 @@ async function processNextCard(gen = runGeneration) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате найдено исходящее СМС из Битрикс24 — отправим сценарий без 1-го приветственного сообщения.`);
             }
 
-            await clickReplyIfPresentInOpenChat(cardId, gen);
-            if (!isRunActive(gen)) return;
-
+            // Сначала 2 сек на пропуск по Esc; «Ответить» жмём только после этого
             const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 2000);
             if (waitRes.aborted || !isRunActive(gen)) return;
 
@@ -819,13 +830,16 @@ async function processNextCard(gen = runGeneration) {
                 return;
             }
 
+            await clickReplyIfPresentInOpenChat(cardId, gen);
+            if (!isRunActive(gen)) return;
+
             await sendSavedFlowInBitrixChat('firstTouch', gen, { skipFirstText: smsAlreadySentInChat });
             if (!isRunActive(gen)) return;
-            await sleep(1000);
+            await sleep(600);
             if (!isRunActive(gen)) return;
 
             pressEscapeEverywhere();
-            await sleep(800);
+            await sleep(500);
             if (!isRunActive(gen)) return;
 
             const hasPhone = dealHasClientPhoneNumber();
@@ -873,11 +887,11 @@ async function processNextCard(gen = runGeneration) {
 
         await sendSavedFlowInBitrixChat('touch1', gen);
         if (!isRunActive(gen)) return;
-        await sleep(1000);
+        await sleep(600);
         if (!isRunActive(gen)) return;
 
         pressEscapeEverywhere();
-        await sleep(800);
+        await sleep(500);
         if (!isRunActive(gen)) return;
 
         const moved = await moveCardToStage('touch1_target');

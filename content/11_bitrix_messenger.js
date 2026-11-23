@@ -82,10 +82,16 @@ async function openBitrixChatForCard(cardId, clickAnswerIfPresent = false) {
             return true;
         }
 
+        const joinBtns = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
+            .filter(e => isVisible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+        if (joinBtns.some(e => /^ответить$/i.test((e.innerText || e.textContent || '').trim()))) {
+            return true;
+        }
+
         if (!chatLoadedAt && findAllInAnyDocument(SELECTORS.bitrix.messengerOpened).some(isVisible)) {
             chatLoadedAt = Date.now();
         }
-        if (chatLoadedAt && (Date.now() - chatLoadedAt >= MESSENGER_ANSWER_GRACE_MS)) {
+        if (chatLoadedAt && (Date.now() - chatLoadedAt >= 800)) {
             return true;
         }
 
