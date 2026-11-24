@@ -267,7 +267,6 @@ function dealHasClientPhoneNumber() {
     return false;
 }
 
-// Однократная вставка текста в редактор «Сообщение» без дублирования
 async function insertSingleTextIntoSmsEditor(editor, text) {
     const clean = String(text || '').trim();
     if (!editor || !clean) return false;
@@ -275,24 +274,16 @@ async function insertSingleTextIntoSmsEditor(editor, text) {
     const norm = (s) => (s || '').replace(/\u200B/g, '').replace(/\s+/g, ' ').trim();
     const read = () => norm(editor.innerText || editor.textContent);
     const want = norm(clean);
-    const doc = editor.ownerDocument || document;
 
     if (read() === want) return true;
 
     editor.focus();
-
-    if (read() !== '') {
-        doc.execCommand('selectAll', false, null);
-        doc.execCommand('delete', false, null);
-        await sleep(80);
-    }
-
-    const dt = new DataTransfer();
-    dt.setData('text/plain', clean);
-    editor.dispatchEvent(new ClipboardEvent('paste', {
+    editor.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
-        clipboardData: dt
+        composed: true,
+        inputType: 'insertText',
+        data: clean
     }));
 
     for (let i = 0; i < 20; i++) {
@@ -300,16 +291,7 @@ async function insertSingleTextIntoSmsEditor(editor, text) {
         if (read() === want) return true;
     }
 
-    if (read() === '') {
-        editor.focus();
-        doc.execCommand('insertText', false, clean);
-        for (let i = 0; i < 10; i++) {
-            await sleep(50);
-            if (read() === want) return true;
-        }
-    }
-
-    console.warn('SMS editor: текст не совпал', read());
+    console.warn('SMS editor: текст не совпал после beforeinput', read());
     return false;
 }
 
