@@ -734,7 +734,31 @@ async function processNextCard(gen = runGeneration) {
         const cardTitleText = (cardTitleLink.innerText || '').trim();
         console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
         clickLikeUser(cardTitleLink);
-        await queueSleep(900, gen);
+
+        // Ждём до 10 сек, пока прогрузятся детали карточки в слайдере (кнопка «Чат», вкладка «Сообщение» или таймлайн)
+        let cardReady = false;
+        for (let i = 0; i < 40; i++) {
+            ensureQueueActive(gen);
+            const hasChatBtn = findAllInAnyDocument('a.crm-entity-widget-client-action-im').length > 0;
+            const hasMsgTab = findAllInAnyDocument(
+                '#crm_scope_timeline_c_deal_13_message, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"], .main-buttons-item[data-id="message"]'
+            ).length > 0;
+            const hasTimeline = findAllInAnyDocument('.crm-timeline__card-wrapper, .ui-entity-editor-section').length > 0;
+            if (hasChatBtn || hasMsgTab || hasTimeline) {
+                cardReady = true;
+                break;
+            }
+            await queueSleep(250, gen);
+        }
+
+        if (!cardReady) {
+            console.warn(`[Бот Bitrix] [Заявка ${cardId}] Детали заявки не прогрузились за 10 сек — закрываем без отметки «обработано».`);
+            await returnToCRMAndEscape();
+            processNextCard(gen);
+            return;
+        }
+
+        await queueSleep(400, gen);
 
         console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
         const chatOpened = await openBitrixChatForCard(cardId, false);
@@ -743,14 +767,30 @@ async function processNextCard(gen = runGeneration) {
         // Если кнопка чата неактивна/заблокирована
         if (!chatOpened) {
             if (isNewMode) {
-                if (hasSentSmsInDealTimeline()) {
-                    console.log(`[Бот Bitrix] [Заявка ${cardId}] Чат неактивен, но «Отправлено СМС-сообщение» уже есть в истории — пропускаем.`);
-                } else {
-                    await sendFirstGreetingViaDealSmsTab(cardId, gen);
+                // Даём вкладке «Сообщение» ещё до 5 сек на догрузку
+                let hasMsgTabNow = false;
+                for (let i = 0; i < 20; i++) {
                     ensureQueueActive(gen);
+                    hasMsgTabNow = findAllInAnyDocument(
+                        '#crm_scope_timeline_c_deal_13_message button.main-buttons-item-link, #crm_scope_timeline_c_deal_13_message, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"] button, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"], .main-buttons-item[data-id="message"] button, .main-buttons-item[data-id="message"]'
+                    ).some(isVisible);
+                    if (hasMsgTabNow) break;
+                    await queueSleep(250, gen);
                 }
 
-                await addHandledCardId(cardId);
+                if (hasSentSmsInDealTimeline()) {
+                    console.log(`[Бот Bitrix] [Заявка ${cardId}] Чат неактивен, но «Отправлено СМС-сообщение» уже есть в истории — пропускаем.`);
+                    await addHandledCardId(cardId);
+                } else if (hasMsgTabNow) {
+                    const smsSent = await sendFirstGreetingViaDealSmsTab(cardId, gen);
+                    ensureQueueActive(gen);
+                    if (smsSent) {
+                        await addHandledCardId(cardId);
+                    }
+                } else {
+                    console.warn(`[Бот Bitrix] [Заявка ${cardId}] Ни «Чат», ни вкладка «Сообщение» не появились — не помечаем обработанной.`);
+                }
+
                 pressEscapeEverywhere();
                 await queueSleep(500, gen);
                 await returnToCRMAndEscape();
