@@ -268,84 +268,49 @@ function dealHasClientPhoneNumber() {
 }
 
 // Однократная вставка текста в редактор «Сообщение» без дублирования
-function insertSingleTextIntoSmsEditor(editor, text) {
-    const cleanText = String(text || '').trim();
-    if (!editor || !cleanText) return false;
+async function insertSingleTextIntoSmsEditor(editor, text) {
+    const clean = String(text || '').trim();
+    if (!editor || !clean) return false;
 
-    const readText = () => (editor.innerText || editor.textContent || '').replace(/\u200B/g, '').trim();
-    if (readText() === cleanText) return true;
-
+    const norm = (s) => (s || '').replace(/\u200B/g, '').replace(/\s+/g, ' ').trim();
+    const read = () => norm(editor.innerText || editor.textContent);
+    const want = norm(clean);
     const doc = editor.ownerDocument || document;
-    const win = doc.defaultView || window;
 
-    let pEl = editor.querySelector('p');
-    if (!pEl) {
-        pEl = doc.createElement('p');
-        pEl.className = 'ui-typography-paragraph ui-text-editor__paragraph';
-        pEl.setAttribute('dir', 'auto');
-        editor.innerHTML = '';
-        editor.appendChild(pEl);
-    }
+    if (read() === want) return true;
 
     editor.focus();
-    try { pEl.focus(); } catch (e) {}
 
-    try {
-        const range = doc.createRange();
-        range.selectNodeContents(pEl);
-        range.collapse(false);
-        const sel = win.getSelection && win.getSelection();
-        if (sel) {
-            sel.removeAllRanges();
-            sel.addRange(range);
-        }
-    } catch (e) {}
-
-    const placeholder = editor.parentElement && editor.parentElement.querySelector('.ui-text-editor-placeholder');
-    if (placeholder) placeholder.classList.remove('--shown');
-
-    // Пробуем вставить через paste с text/plain (Lexical обрабатывает это как единый блок)
-    let pasted = false;
-    try {
-        if (typeof ClipboardEvent === 'function' && typeof DataTransfer === 'function') {
-            const dt = new DataTransfer();
-            dt.setData('text/plain', cleanText);
-            editor.dispatchEvent(new ClipboardEvent('paste', {
-                bubbles: true,
-                cancelable: true,
-                clipboardData: dt
-            }));
-            if (readText() === cleanText) {
-                pasted = true;
-            }
-        }
-    } catch (e) {
-        pasted = false;
+    if (read() !== '') {
+        doc.execCommand('selectAll', false, null);
+        doc.execCommand('delete', false, null);
+        await sleep(80);
     }
 
-    if (!pasted) {
-        // Если paste не вставил — сбрасываем пустой абзац и делаем один execCommand('insertText')
-        pEl.innerHTML = '<br data-lexical-managed-linebreak="true">';
-        try {
-            const range = doc.createRange();
-            range.setStart(pEl, 0);
-            range.collapse(true);
-            const sel = win.getSelection && win.getSelection();
-            if (sel) {
-                sel.removeAllRanges();
-                sel.addRange(range);
-            }
-            doc.execCommand('insertText', false, cleanText);
-        } catch (e) {}
+    const dt = new DataTransfer();
+    dt.setData('text/plain', clean);
+    editor.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt
+    }));
 
-        if (!readText()) {
-            pEl.textContent = cleanText;
-            editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    for (let i = 0; i < 20; i++) {
+        await sleep(50);
+        if (read() === want) return true;
+    }
+
+    if (read() === '') {
+        editor.focus();
+        doc.execCommand('insertText', false, clean);
+        for (let i = 0; i < 10; i++) {
+            await sleep(50);
+            if (read() === want) return true;
         }
     }
 
-    editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-    return readText().length > 0;
+    console.warn('SMS editor: текст не совпал', read());
+    return false;
 }
 
 // Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
@@ -399,7 +364,7 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     await sleep(250);
     if (!isRunActive(gen)) return false;
 
-    const okInsert = insertSingleTextIntoSmsEditor(editor, greetingText);
+    const okInsert = await insertSingleTextIntoSmsEditor(editor, greetingText);
     const currentVal = (editor.innerText || editor.textContent || '').replace(/\u200B/g, '').trim();
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в «Сообщение» (ok=${okInsert}):`, JSON.stringify(currentVal));
 
@@ -407,6 +372,9 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         console.warn(`[Бот Bitrix] [Заявка ${cardId}] Не удалось вставить текст в поле «Сообщение».`);
         return false;
     }
+
+    await sleep(300);
+    if (!isRunActive(gen)) return false;
 
     const doc = editor.ownerDocument || document;
     const findSmsSendBtn = () => {
