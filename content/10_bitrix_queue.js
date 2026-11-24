@@ -24,6 +24,23 @@ function isRunActive(gen = runGeneration) {
     return gen === runGeneration && isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
 }
 
+function ensureQueueActive(gen) {
+    if (!isRunActive(gen)) {
+        throw new Error('BOT_ABORTED');
+    }
+}
+
+async function queueSleep(ms, gen) {
+    const step = 100;
+    let left = Math.max(0, Number(ms) || 0);
+    while (left > 0) {
+        ensureQueueActive(gen);
+        const chunk = Math.min(step, left);
+        await sleep(chunk);
+        left -= chunk;
+    }
+}
+
 function getCardId(card) {
     const direct = card.getAttribute('data-id');
     if (direct) return direct;
@@ -200,9 +217,9 @@ function hasOutgoingBitrixSmsInChat() {
     });
 }
 
-// Ищем и нажимаем синюю кнопку «Ответить» внутри открытого чата
+// Ждём появления кнопки «Ответить» или активного поля ввода до 7 сек (на случай долгой прогрузки чата)
 async function clickReplyIfPresentInOpenChat(cardId, gen) {
-    if (!isRunActive(gen)) return false;
+    ensureQueueActive(gen);
 
     const findReplyBtn = () => {
         const bySelector = findAllInAnyDocument(SELECTORS.bitrix.messengerJoinBtns)
@@ -219,16 +236,24 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
         return null;
     };
 
-    for (let i = 0; i < 4; i++) {
-        if (!isRunActive(gen)) return false;
+    const hasActiveTextarea = () => {
+        const ta = findAllInAnyDocument(SELECTORS.bitrix.messengerTextarea).find(isVisible);
+        return Boolean(ta && !ta.disabled);
+    };
+
+    for (let i = 0; i < 28; i++) {
+        ensureQueueActive(gen);
+        if (hasActiveTextarea()) return true;
+
         const replyBtn = findReplyBtn();
         if (replyBtn) {
+            ensureQueueActive(gen);
             console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
             clickLikeUser(replyBtn);
-            await sleep(500);
+            await queueSleep(600, gen);
             return true;
         }
-        await sleep(200);
+        await queueSleep(250, gen);
     }
     return false;
 }
@@ -267,7 +292,9 @@ function dealHasClientPhoneNumber() {
     return false;
 }
 
-async function insertSingleTextIntoSmsEditor(editor, text) {
+// Однократная вставка текста через beforeinput (без запасных вставок и дублей)
+async function insertSingleTextIntoSmsEditor(editor, text, gen = runGeneration) {
+    ensureQueueActive(gen);
     const clean = String(text || '').trim();
     if (!editor || !clean) return false;
 
@@ -278,6 +305,7 @@ async function insertSingleTextIntoSmsEditor(editor, text) {
     if (read() === want) return true;
 
     editor.focus();
+    ensureQueueActive(gen);
     editor.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
@@ -287,6 +315,7 @@ async function insertSingleTextIntoSmsEditor(editor, text) {
     }));
 
     for (let i = 0; i < 20; i++) {
+        ensureQueueActive(gen);
         await sleep(50);
         if (read() === want) return true;
     }
@@ -295,9 +324,9 @@ async function insertSingleTextIntoSmsEditor(editor, text) {
     return false;
 }
 
-// Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки (когда кнопка чата недоступна)
+// Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки
 async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
-    if (!isRunActive(gen)) return false;
+    ensureQueueActive(gen);
 
     const msgTabBtn =
         findAllInAnyDocument('#crm_scope_timeline_c_deal_13_message button.main-buttons-item-link, #crm_scope_timeline_c_deal_13_message, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"] button, [data-top-menu-id="crm_scope_timeline_c_deal_13"][data-id="message"]')
@@ -311,7 +340,7 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     }
 
     await loadCustomFlowState();
-    if (!isRunActive(gen)) return false;
+    ensureQueueActive(gen);
 
     const items = (customFlowState.flows.firstTouch && Array.isArray(customFlowState.flows.firstTouch.items))
         ? customFlowState.flows.firstTouch.items
@@ -330,12 +359,13 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     clickLikeUser(msgTabBtn);
 
     let editor = null;
-    for (let i = 0; i < 20; i++) {
-        if (!isRunActive(gen)) return false;
-        editor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"], .messageservice-message-editor__content .ui-text-editor-editable[contenteditable="true"]')
-            .find(isVisible);
+    for (let i = 0; i < 24; i++) {
+        ensureQueueActive(gen);
+        editor = findAllInAnyDocument(
+            '[data-test-role="messageservice-message-editor"] .ui-text-editor-editable[data-lexical-editor="true"], .messageservice-message-editor__content [contenteditable="true"]'
+        ).find(isVisible);
         if (editor) break;
-        await sleep(250);
+        await queueSleep(250, gen);
     }
 
     if (!editor) {
@@ -343,10 +373,8 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
-    await sleep(250);
-    if (!isRunActive(gen)) return false;
-
-    const okInsert = await insertSingleTextIntoSmsEditor(editor, greetingText);
+    await queueSleep(200, gen);
+    const okInsert = await insertSingleTextIntoSmsEditor(editor, greetingText, gen);
     const currentVal = (editor.innerText || editor.textContent || '').replace(/\u200B/g, '').trim();
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Текст в «Сообщение» (ok=${okInsert}):`, JSON.stringify(currentVal));
 
@@ -355,38 +383,27 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
-    await sleep(300);
-    if (!isRunActive(gen)) return false;
+    await queueSleep(300, gen);
 
     const doc = editor.ownerDocument || document;
     const findSmsSendBtn = () => {
-        const scopes = [
-            editor.closest('.messageservice-message-editor'),
-            editor.closest('.crm-entity-stream-section, .crm-timeline__card, .ui-sidepanel-layout, form'),
-            doc
-        ].filter(Boolean);
-
-        for (const scope of scopes) {
-            const btns = Array.from(scope.querySelectorAll('button, [role="button"], .ui-btn'));
-            const match = btns.find(b => {
-                if (!isVisible(b)) return false;
-                if (b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('--disabled') || b.classList.contains('ui-btn-disabled')) {
-                    return false;
-                }
-                const txt = (b.innerText || b.textContent || '').trim();
-                return /^отправить$/i.test(txt);
-            });
-            if (match) return match;
-        }
-        return null;
+        const root = editor.closest('[data-test-role="messageservice-message-editor"], .messageservice-message-editor') || doc;
+        const btns = Array.from(root.querySelectorAll('.messageservice-message-editor__footer__buttons button, button'));
+        return btns.find(b => {
+            if (!isVisible(b)) return false;
+            if (b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('ui-btn-disabled')) {
+                return false;
+            }
+            return /^отправить$/i.test((b.innerText || b.textContent || '').trim());
+        }) || null;
     };
 
     let sendBtn = null;
     for (let i = 0; i < 15; i++) {
-        if (!isRunActive(gen)) return false;
+        ensureQueueActive(gen);
         sendBtn = findSmsSendBtn();
         if (sendBtn) break;
-        await sleep(200);
+        await queueSleep(200, gen);
     }
 
     if (!sendBtn) {
@@ -394,13 +411,13 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
         return false;
     }
 
+    ensureQueueActive(gen);
     console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Отправить» в редакторе «Сообщение»...`);
     clickLikeUser(sendBtn);
 
-    // Ждём отправки (очистки/скрытия редактора) до 4 сек
     for (let i = 0; i < 16; i++) {
-        if (!isRunActive(gen)) return false;
-        await sleep(250);
+        ensureQueueActive(gen);
+        await queueSleep(250, gen);
         const stillEditor = findAllInAnyDocument('.messageservice-message-editor__content [contenteditable="true"]').find(isVisible);
         const txtNow = stillEditor ? (stillEditor.innerText || stillEditor.textContent || '').trim() : '';
         if (!stillEditor || !txtNow) {
@@ -505,12 +522,11 @@ function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 2000
 
 // После пропуска по Esc в «Новых»: 1-й Esc -> детали заявки, 2-й Esc -> общий список заявок
 async function exitChatToDetailsThenList(gen) {
-    if (!isRunActive(gen)) return;
+    ensureQueueActive(gen);
     pressEscapeEverywhere();
-    await sleep(600);
-    if (!isRunActive(gen)) return;
+    await queueSleep(600, gen);
     pressEscapeEverywhere();
-    await sleep(600);
+    await queueSleep(600, gen);
 }
 
 function askTouch1SendConfirmation(cardId, titleText, gen) {
@@ -603,7 +619,7 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
 
 async function scrollToFirstNonTodayCard(column, handledSet, gen) {
     for (let step = 0; step < 50; step++) {
-        if (!isRunActive(gen)) return null;
+        ensureQueueActive(gen);
 
         const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
         const candidate = cards.find(c => {
@@ -612,7 +628,7 @@ async function scrollToFirstNonTodayCard(column, handledSet, gen) {
         });
         if (candidate) {
             candidate.scrollIntoView({ block: 'center' });
-            await sleep(300);
+            await queueSleep(300, gen);
             return candidate;
         }
 
@@ -624,23 +640,27 @@ async function scrollToFirstNonTodayCard(column, handledSet, gen) {
         if (cards.length) {
             cards[cards.length - 1].scrollIntoView({ block: 'end' });
         }
-        await sleep(700);
+        await queueSleep(700, gen);
     }
 
-    if (!isRunActive(gen)) return null;
+    ensureQueueActive(gen);
     const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
     return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
 }
 
 async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
-    if (!isRunActive(gen)) return;
+    ensureQueueActive(gen);
     const runner = (typeof runBitrixFlow === 'function')
         ? runBitrixFlow
         : (typeof window.runBitrixFlow === 'function' ? window.runBitrixFlow : null);
     if (!runner) {
         throw new Error("Не найдена функция runBitrixFlow (проверьте загрузку 32_bitrix_custom_flow.js).");
     }
-    await runner(flowKey, gen, options);
+    const res = await runner(flowKey, gen, options);
+    ensureQueueActive(gen);
+    if (res === false) {
+        throw new Error("Сценарий отправки не выполнился (поле ввода не найдено или отправка прервана).");
+    }
 }
 
 async function processNextCard(gen = runGeneration) {
@@ -653,110 +673,99 @@ async function processNextCard(gen = runGeneration) {
     }
     if (!isRunActive(gen)) return;
 
-    const isNewMode = BOT_CONFIG.runMode === 'new';
-    const columnSelector = isNewMode ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
-    const column = document.querySelector(columnSelector);
+    try {
+        ensureQueueActive(gen);
 
-    if (!column) {
-        if (!isRunActive(gen)) return;
-        showAlert(`Не найдена колонка для режима '${BOT_CONFIG.runMode}'. Откройте канбан с заявками.`);
-        return;
-    }
+        const isNewMode = BOT_CONFIG.runMode === 'new';
+        const columnSelector = isNewMode ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
+        const column = document.querySelector(columnSelector);
 
-    const handled = await getHandledCardIds();
-    if (!isRunActive(gen)) return;
-    const handledSet = new Set(handled);
-
-    let card = null;
-    if (isNewMode) {
-        const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-        card = allCards.find(c => !handledSet.has(getCardId(c))) || null;
-        if (!card) {
-            if (!isRunActive(gen)) return;
-            console.log(`[Бот Bitrix] Новых заявок пока нет. Проверка через ${IDLE_POLL_MS / 1000} сек...`);
-            clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => {
-                if (isRunActive(gen)) processNextCard(gen);
-            }, IDLE_POLL_MS);
+        if (!column) {
+            showAlert(`Не найдена колонка для режима '${BOT_CONFIG.runMode}'. Откройте канбан с заявками.`);
             return;
         }
-    } else {
-        card = await scrollToFirstNonTodayCard(column, handledSet, gen);
-        if (!isRunActive(gen)) return;
-        if (!card) {
-            alert("В колонке «1 касание» нет заявок с датой не «сегодня» для обработки.");
-            resetBotRuntimeState();
-            return;
-        }
-    }
 
-    const cardId = getCardId(card);
-    currentCardId = cardId;
+        const handled = await getHandledCardIds();
+        ensureQueueActive(gen);
+        const handledSet = new Set(handled);
 
-    cardAttempts[cardId] = (cardAttempts[cardId] || 0) + 1;
-    if (cardAttempts[cardId] > 3) {
-        if (!isRunActive(gen)) return;
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — ставим на паузу.`);
-        showAlert(`Заявка ${cardId} не обработана после 3 попыток. Нажмите «Сбросить очередь» или исправьте ошибку.`);
-        return;
-    }
-
-    const cardTitleLink = card.querySelector('.crm-kanban-item-title');
-    if (!cardTitleLink) {
-        return;
-    }
-
-    const cardTitleText = (cardTitleLink.innerText || '').trim();
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
-    clickLikeUser(cardTitleLink);
-    await sleep(900);
-    if (!isRunActive(gen)) return;
-
-    console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
-    const chatOpened = await openBitrixChatForCard(cardId, false);
-    if (!isRunActive(gen)) return;
-
-    // Если кнопка чата неактивна/заблокирована
-    if (!chatOpened) {
+        let card = null;
         if (isNewMode) {
-            if (hasSentSmsInDealTimeline()) {
-                console.log(`[Бот Bitrix] [Заявка ${cardId}] Чат неактивен, но «Отправлено СМС-сообщение» уже есть в истории — пропускаем.`);
-            } else {
-                await sendFirstGreetingViaDealSmsTab(cardId, gen);
-                if (!isRunActive(gen)) return;
+            const allCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+            card = allCards.find(c => !handledSet.has(getCardId(c))) || null;
+            if (!card) {
+                console.log(`[Бот Bitrix] Новых заявок пока нет. Проверка через ${IDLE_POLL_MS / 1000} сек...`);
+                clearTimeout(idleTimer);
+                idleTimer = setTimeout(() => {
+                    if (isRunActive(gen)) processNextCard(gen);
+                }, IDLE_POLL_MS);
+                return;
+            }
+        } else {
+            card = await scrollToFirstNonTodayCard(column, handledSet, gen);
+            if (!card) {
+                alert("В колонке «1 касание» нет заявок с датой не «сегодня» для обработки.");
+                resetBotRuntimeState();
+                return;
+            }
+        }
+
+        const cardId = getCardId(card);
+        currentCardId = cardId;
+
+        cardAttempts[cardId] = (cardAttempts[cardId] || 0) + 1;
+        if (cardAttempts[cardId] > 3) {
+            console.warn(`[Бот Bitrix] [Заявка ${cardId}] Превышено число попыток — ставим на паузу.`);
+            showAlert(`Заявка ${cardId} не обработана после 3 попыток. Нажмите «Сбросить очередь» или исправьте ошибку.`);
+            return;
+        }
+
+        const cardTitleLink = card.querySelector('.crm-kanban-item-title');
+        if (!cardTitleLink) {
+            return;
+        }
+
+        const cardTitleText = (cardTitleLink.innerText || '').trim();
+        console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
+        clickLikeUser(cardTitleLink);
+        await queueSleep(900, gen);
+
+        console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
+        const chatOpened = await openBitrixChatForCard(cardId, false);
+        ensureQueueActive(gen);
+
+        // Если кнопка чата неактивна/заблокирована
+        if (!chatOpened) {
+            if (isNewMode) {
+                if (hasSentSmsInDealTimeline()) {
+                    console.log(`[Бот Bitrix] [Заявка ${cardId}] Чат неактивен, но «Отправлено СМС-сообщение» уже есть в истории — пропускаем.`);
+                } else {
+                    await sendFirstGreetingViaDealSmsTab(cardId, gen);
+                    ensureQueueActive(gen);
+                }
+
+                await addHandledCardId(cardId);
+                pressEscapeEverywhere();
+                await queueSleep(500, gen);
+                await returnToCRMAndEscape();
+                processNextCard(gen);
+                return;
             }
 
+            console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — пропускаем заявку.`);
             await addHandledCardId(cardId);
-            if (!isRunActive(gen)) return;
-            pressEscapeEverywhere();
-            await sleep(500);
-            if (!isRunActive(gen)) return;
-            await returnToCRMAndEscape();
-            if (!isRunActive(gen)) return;
+            await closeChatAndCard();
             processNextCard(gen);
             return;
         }
 
-        console.warn(`[Бот Bitrix] [Заявка ${cardId}] Чат не открылся — пропускаем заявку.`);
-        await addHandledCardId(cardId);
-        if (!isRunActive(gen)) return;
-        await closeChatAndCard();
-        if (!isRunActive(gen)) return;
-        processNextCard(gen);
-        return;
-    }
+        await queueSleep(250, gen);
 
-    await sleep(250);
-    if (!isRunActive(gen)) return;
-
-    if (isNewMode) {
-        try {
+        if (isNewMode) {
             if (hasSelfMessagesInBitrixChat()) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате уже есть наши сообщения — пропускаем.`);
                 await addHandledCardId(cardId);
-                if (!isRunActive(gen)) return;
                 await closeChatAndCard();
-                if (!isRunActive(gen)) return;
                 processNextCard(gen);
                 return;
             }
@@ -768,29 +777,25 @@ async function processNextCard(gen = runGeneration) {
 
             // Сначала 2 сек на пропуск по Esc; «Ответить» жмём только после этого
             const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 2000);
-            if (waitRes.aborted || !isRunActive(gen)) return;
+            if (waitRes.aborted) return;
+            ensureQueueActive(gen);
 
             if (waitRes.skipped) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] Пропущена по Esc перед первым сообщением.`);
                 await addHandledCardId(cardId);
-                if (!isRunActive(gen)) return;
                 await exitChatToDetailsThenList(gen);
-                if (!isRunActive(gen)) return;
                 processNextCard(gen);
                 return;
             }
 
             await clickReplyIfPresentInOpenChat(cardId, gen);
-            if (!isRunActive(gen)) return;
+            ensureQueueActive(gen);
 
             await sendSavedFlowInBitrixChat('firstTouch', gen, { skipFirstText: smsAlreadySentInChat });
-            if (!isRunActive(gen)) return;
-            await sleep(600);
-            if (!isRunActive(gen)) return;
+            await queueSleep(600, gen);
 
             pressEscapeEverywhere();
-            await sleep(500);
-            if (!isRunActive(gen)) return;
+            await queueSleep(500, gen);
 
             const hasPhone = dealHasClientPhoneNumber();
             const targetStageForNew = hasPhone ? 'touch1' : 'close';
@@ -798,65 +803,55 @@ async function processNextCard(gen = runGeneration) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] Номер телефона в деталях не найден (Instagram/соцсеть без номера) — закрываем сделку.`);
             }
 
-            const moved = await moveCardToStage(targetStageForNew);
-            if (!moved || !isRunActive(gen)) return;
+            const moved = await moveCardToStage(targetStageForNew, gen);
+            if (!moved) return;
+            ensureQueueActive(gen);
 
             await addHandledCardId(cardId);
-            if (!isRunActive(gen)) return;
             await returnToCRMAndEscape();
-            if (!isRunActive(gen)) return;
             processNextCard(gen);
-        } catch (e) {
-            bitrixChatSending = false;
-            if (!isRunActive(gen)) return;
-            console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке новых сообщений:`, e);
-            showAlert("Ошибка при отправке сообщений в чате Bitrix: " + (e && e.message ? e.message : e));
+            return;
         }
-        return;
-    }
 
-    const answer = await askTouch1SendConfirmation(cardId, cardTitleText, gen);
-    if (answer === null || !isRunActive(gen)) {
-        removeLeftConfirmModal();
-        return;
-    }
+        const answer = await askTouch1SendConfirmation(cardId, cardTitleText, gen);
+        if (answer === null) {
+            removeLeftConfirmModal();
+            return;
+        }
+        ensureQueueActive(gen);
 
-    if (!answer) {
-        console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
-        await addHandledCardId(cardId);
-        if (!isRunActive(gen)) return;
-        await closeChatAndCard();
-        if (!isRunActive(gen)) return;
-        processNextCard(gen);
-        return;
-    }
+        if (!answer) {
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
+            await addHandledCardId(cardId);
+            await closeChatAndCard();
+            processNextCard(gen);
+            return;
+        }
 
-    try {
         await clickReplyIfPresentInOpenChat(cardId, gen);
-        if (!isRunActive(gen)) return;
+        ensureQueueActive(gen);
 
         await sendSavedFlowInBitrixChat('touch1', gen);
-        if (!isRunActive(gen)) return;
-        await sleep(600);
-        if (!isRunActive(gen)) return;
+        await queueSleep(600, gen);
 
         pressEscapeEverywhere();
-        await sleep(500);
-        if (!isRunActive(gen)) return;
+        await queueSleep(500, gen);
 
-        const moved = await moveCardToStage('touch1_target');
-        if (!moved || !isRunActive(gen)) return;
+        const moved = await moveCardToStage('touch1_target', gen);
+        if (!moved) return;
+        ensureQueueActive(gen);
 
         await addHandledCardId(cardId);
-        if (!isRunActive(gen)) return;
         await returnToCRMAndEscape();
-        if (!isRunActive(gen)) return;
         processNextCard(gen);
     } catch (e) {
         bitrixChatSending = false;
+        if (e && e.message === 'BOT_ABORTED') {
+            return;
+        }
         if (!isRunActive(gen)) return;
-        console.error(`[Бот CRM] [Заявка ${cardId}] Ошибка при отправке 1-го касания:`, e);
-        showAlert("Ошибка при отправке сообщения 1-го касания: " + (e && e.message ? e.message : e));
+        console.error(`[Бот CRM] [Заявка ${currentCardId || '?'}] Ошибка обработки заявки:`, e);
+        showAlert("Ошибка при обработке заявки (стадия НЕ изменена): " + (e && e.message ? e.message : e));
     }
 }
 
