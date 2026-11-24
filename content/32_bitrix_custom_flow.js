@@ -123,11 +123,17 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
         return isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
     };
 
-    if (!stillAllowed()) return;
-    if (!ensureBitrixChatReadyForFlow()) return;
+    const assertFlowAllowed = () => {
+        if (!stillAllowed()) {
+            throw new Error(isAutoRun ? 'BOT_ABORTED' : 'FLOW_STOPPED');
+        }
+    };
+
+    assertFlowAllowed();
+    if (!ensureBitrixChatReadyForFlow()) return false;
 
     await loadCustomFlowState();
-    if (!stillAllowed()) return;
+    assertFlowAllowed();
 
     const flow = customFlowState.flows[flowKey];
     let items = (flow && Array.isArray(flow.items)) ? flow.items.slice() : [];
@@ -141,7 +147,7 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
 
     if (!items.length) {
         showBotToast("В выбранном сценарии нет элементов для отправки.", true);
-        return;
+        return false;
     }
 
     customFlowBusy = true;
@@ -150,7 +156,7 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
     try {
         const preparedFiles = [];
         for (let i = 0; i < items.length; i++) {
-            if (!stillAllowed()) return;
+            assertFlowAllowed();
             const item = items[i];
             if (item && item.type === 'file') {
                 preparedFiles[i] = await loadPriceFileDataTransfer(buildFilePayloadFromStep(item));
@@ -158,13 +164,13 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
         }
 
         for (let i = 0; i < items.length; i++) {
-            if (!stillAllowed()) return;
+            assertFlowAllowed();
             const item = items[i];
             if (!item || !item.type) continue;
 
             if (i > 0) {
                 await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
-                if (!stillAllowed()) return;
+                assertFlowAllowed();
             }
 
             if (item.type === 'text') {
@@ -183,10 +189,18 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
             }
         }
 
-        if (!stillAllowed()) return;
+        assertFlowAllowed();
         showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
+        return true;
     } catch (e) {
-        if (!stillAllowed()) return;
+        if (e && (e.message === 'BOT_ABORTED' || e.message === 'FLOW_STOPPED')) {
+            if (isAutoRun) throw new Error('BOT_ABORTED');
+            return false;
+        }
+        if (!stillAllowed()) {
+            if (isAutoRun) throw new Error('BOT_ABORTED');
+            return false;
+        }
         console.error("[Бот Bitrix] Ошибка выполнения сценария:", e);
         throw e;
     } finally {

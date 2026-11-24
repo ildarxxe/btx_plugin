@@ -218,6 +218,7 @@ function hasOutgoingBitrixSmsInChat() {
 }
 
 // Ждём появления кнопки «Ответить» или активного поля ввода до 7 сек (на случай долгой прогрузки чата)
+// Ждём появления кнопки «Ответить» или активного поля ввода до 7 сек; после клика по «Ответить» ждём активации поля ввода
 async function clickReplyIfPresentInOpenChat(cardId, gen) {
     ensureQueueActive(gen);
 
@@ -236,26 +237,32 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
         return null;
     };
 
-    const hasActiveTextarea = () => {
+    const getActiveTextarea = () => {
         const ta = findAllInAnyDocument(SELECTORS.bitrix.messengerTextarea).find(isVisible);
-        return Boolean(ta && !ta.disabled);
+        return (ta && !ta.disabled) ? ta : null;
     };
 
     for (let i = 0; i < 28; i++) {
         ensureQueueActive(gen);
-        if (hasActiveTextarea()) return true;
+        if (getActiveTextarea()) return true;
 
         const replyBtn = findReplyBtn();
         if (replyBtn) {
             ensureQueueActive(gen);
             console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
             clickLikeUser(replyBtn);
-            await queueSleep(600, gen);
+
+            // Ждём до 3.5 сек, пока после клика по «Ответить» откроется поле ввода
+            for (let j = 0; j < 14; j++) {
+                ensureQueueActive(gen);
+                await queueSleep(250, gen);
+                if (getActiveTextarea()) return true;
+            }
             return true;
         }
         await queueSleep(250, gen);
     }
-    return false;
+    return Boolean(getActiveTextarea());
 }
 
 // Проверяем в таймлайне карточки, есть ли уже запись «Отправлено СМС-сообщение»
@@ -658,8 +665,8 @@ async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
     }
     const res = await runner(flowKey, gen, options);
     ensureQueueActive(gen);
-    if (res === false) {
-        throw new Error("Сценарий отправки не выполнился (поле ввода не найдено или отправка прервана).");
+    if (res !== true) {
+        throw new Error("Сценарий не вернул true — остановка до смены стадии.");
     }
 }
 
