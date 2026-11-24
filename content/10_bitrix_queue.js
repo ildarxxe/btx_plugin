@@ -242,23 +242,20 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
         return (ta && !ta.disabled) ? ta : null;
     };
 
-    for (let i = 0; i < 28; i++) {
+    // Ждём до 12 сек: если поле ввода уже активно — кнопки «Ответить» не было (или уже нажата);
+    // если есть «Ответить» — жмём (повтор не чаще раза в 3 сек), пока не появится активное поле.
+    // true — только когда поле ввода реально готово; false — поле так и не появилось.
+    const deadline = Date.now() + 12000;
+    let lastClickAt = 0;
+    while (Date.now() < deadline) {
         ensureQueueActive(gen);
         if (getActiveTextarea()) return true;
 
         const replyBtn = findReplyBtn();
-        if (replyBtn) {
-            ensureQueueActive(gen);
+        if (replyBtn && Date.now() - lastClickAt > 3000) {
             console.log(`[Бот Bitrix] [Заявка ${cardId}] Нажимаем «Ответить» в чате...`);
             clickLikeUser(replyBtn);
-
-            // Ждём до 3.5 сек, пока после клика по «Ответить» откроется поле ввода
-            for (let j = 0; j < 14; j++) {
-                ensureQueueActive(gen);
-                await queueSleep(250, gen);
-                if (getActiveTextarea()) return true;
-            }
-            return true;
+            lastClickAt = Date.now();
         }
         await queueSleep(250, gen);
     }
@@ -795,8 +792,9 @@ async function processNextCard(gen = runGeneration) {
                 return;
             }
 
-            await clickReplyIfPresentInOpenChat(cardId, gen);
+            const inputReady = await clickReplyIfPresentInOpenChat(cardId, gen);
             ensureQueueActive(gen);
+            if (!inputReady) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
 
             await sendSavedFlowInBitrixChat('firstTouch', gen, { skipFirstText: smsAlreadySentInChat });
             await queueSleep(600, gen);
@@ -835,8 +833,9 @@ async function processNextCard(gen = runGeneration) {
             return;
         }
 
-        await clickReplyIfPresentInOpenChat(cardId, gen);
+        const inputReady = await clickReplyIfPresentInOpenChat(cardId, gen);
         ensureQueueActive(gen);
+        if (!inputReady) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
 
         await sendSavedFlowInBitrixChat('touch1', gen);
         await queueSleep(600, gen);
