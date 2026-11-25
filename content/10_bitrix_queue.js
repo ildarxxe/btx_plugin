@@ -875,13 +875,22 @@ function proceedToNextCardFromStorage() {
 }
 
 function extractCardDateRaw(card) {
-    const byPrimary = card.querySelector('.crm-kanban-item-date');
+    const byLastActivityAgo = card.querySelector('.crm-kanban-item-last-activity-time-ago');
+    const byLastActivityBox = card.querySelector('.crm-kanban-item-last-activity-time');
     const byConfig = SELECTORS?.bitrix?.cardDate ? card.querySelector(SELECTORS.bitrix.cardDate) : null;
-    const el = byPrimary || byConfig;
+    const byItemDate = card.querySelector('.crm-kanban-item-date');
+
+    const el = byLastActivityAgo || byLastActivityBox || byConfig || byItemDate;
+    const selectorUsed = byLastActivityAgo
+        ? '.crm-kanban-item-last-activity-time-ago'
+        : (byLastActivityBox
+            ? '.crm-kanban-item-last-activity-time'
+            : (byConfig ? SELECTORS.bitrix.cardDate : (byItemDate ? '.crm-kanban-item-date' : 'none')));
+
     const rawText = el ? (el.innerText || el.textContent || '') : '';
     return {
         elFound: Boolean(el),
-        selectorUsed: byPrimary ? '.crm-kanban-item-date' : (byConfig ? SELECTORS.bitrix.cardDate : 'none'),
+        selectorUsed,
         rawText: rawText.trim(),
         normText: rawText.trim().toLowerCase()
     };
@@ -891,10 +900,9 @@ function isCardDateToday(card, cardId = '', debug = false) {
     const info = extractCardDateRaw(card);
     const t = info.normText;
 
-    // Если дата пустая или не найдена — считаем «сегодня», чтобы случайно не взять свежую карточку
     if (!t) {
         if (debug) {
-            console.log(`[DBG Дата] card=${cardId} | dateEl=${info.elFound} (${info.selectorUsed}) | text="" -> TODAY (пусто)`);
+            console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | text="" -> TODAY (пусто)`);
         }
         return true;
     }
@@ -905,13 +913,13 @@ function isCardDateToday(card, cardId = '', debug = false) {
 
     if (t.includes('сегодня')) {
         isToday = true;
-        reason = 'содержит "сегодня"';
+        reason = `содержит "сегодня" (${info.selectorUsed})`;
     } else if (t.includes('вчера')) {
         isToday = false;
-        reason = 'содержит "вчера"';
+        reason = `содержит "вчера" (${info.selectorUsed})`;
     } else if (/^\d{1,2}:\d{2}$/.test(t)) {
         isToday = true;
-        reason = 'формат времени HH:MM';
+        reason = `только время HH:MM (${info.selectorUsed})`;
     } else if (t.includes('назад')) {
         const m = t.match(/(\d+)\s*(секунд|минут|час)/);
         if (!m) {
@@ -941,7 +949,7 @@ function isCardDateToday(card, cardId = '', debug = false) {
     }
 
     if (debug) {
-        console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" | isToday=${isToday} (${reason})`);
+        console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | raw="${info.rawText}" | isToday=${isToday} (${reason})`);
     }
     return isToday;
 }

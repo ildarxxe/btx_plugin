@@ -27,7 +27,7 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
     };
 }
 
-console.warn('[BOT BUILD CHECK] 10_bitrix_queue 3.1', window.location.href);
+console.warn('[BOT BUILD CHECK] 10_bitrix_queue 3.2', window.location.href);
 
 const PRICE_FILE_PATH = 'https://ildarxxe.github.io/btx_plugin/price.pdf';
 
@@ -91,7 +91,7 @@ const SELECTORS = {
         newColumn: '[data-testid="kanban-column-C13:NEW"]',
         touchColumn: '[data-testid="kanban-column-C13:UC_QUTSPY"]',
         cards: '.main-kanban-item',
-        cardDate: '.crm-kanban-item-date',
+        cardDate: '.crm-kanban-item-last-activity-time-ago, .crm-kanban-item-last-activity-time, .crm-kanban-item-date',
         phoneWidget: '.crm-entity-widget-client-contact-phone',
         stageTouch1: '.crm-entity-section-status-step[data-id="C13:UC_QUTSPY"]',
         stageTouch2: '.crm-entity-section-status-step[data-id="C13:UC_LOXVY8"]',
