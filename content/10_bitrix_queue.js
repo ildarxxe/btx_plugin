@@ -20,8 +20,6 @@ const RUN_HOTKEYS = {
     }
 };
 
-console.warn('[BOT BUILD CHECK] 10_bitrix_queue 2.0', window.location.href);
-
 function isRunActive(gen = runGeneration) {
     return gen === runGeneration && isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
 }

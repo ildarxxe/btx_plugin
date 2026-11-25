@@ -27,6 +27,8 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
     };
 }
 
+console.warn('[BOT BUILD CHECK] 10_bitrix_queue 3.0', window.location.href);
+
 const PRICE_FILE_PATH = 'https://ildarxxe.github.io/btx_plugin/price.pdf';
 
 const MESSAGE_VARIANTS = {
