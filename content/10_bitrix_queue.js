@@ -874,75 +874,139 @@ function proceedToNextCardFromStorage() {
     processNextCard(runGeneration);
 }
 
-function isCardDateToday(card) {
-    const el = card.querySelector('.crm-kanban-item-date') || card.querySelector(SELECTORS.bitrix.cardDate);
-    const t = ((el && el.innerText) || '').trim().toLowerCase();
+function extractCardDateRaw(card) {
+    const byPrimary = card.querySelector('.crm-kanban-item-date');
+    const byConfig = SELECTORS?.bitrix?.cardDate ? card.querySelector(SELECTORS.bitrix.cardDate) : null;
+    const el = byPrimary || byConfig;
+    const rawText = el ? (el.innerText || el.textContent || '') : '';
+    return {
+        elFound: Boolean(el),
+        selectorUsed: byPrimary ? '.crm-kanban-item-date' : (byConfig ? SELECTORS.bitrix.cardDate : 'none'),
+        rawText: rawText.trim(),
+        normText: rawText.trim().toLowerCase()
+    };
+}
 
-    // Если блок даты не найден или пустой — считаем сегодняшней, чтобы не открыть лишнее
-    if (!t) return true;
+function isCardDateToday(card, cardId = '', debug = false) {
+    const info = extractCardDateRaw(card);
+    const t = info.normText;
+
+    // Если дата пустая или не найдена — считаем «сегодня», чтобы случайно не взять свежую карточку
+    if (!t) {
+        if (debug) {
+            console.log(`[DBG Дата] card=${cardId} | dateEl=${info.elFound} (${info.selectorUsed}) | text="" -> TODAY (пусто)`);
+        }
+        return true;
+    }
 
     const now = new Date();
+    let isToday = false;
+    let reason = '';
 
-    if (t.includes('сегодня')) return true;
-    if (t.includes('вчера')) return false;
-
-    // Если указано только время (например "14:25") или "N минут/часов назад" — проверяем день
-    if (/^\d{1,2}:\d{2}$/.test(t)) return true;
-
-    if (t.includes('назад')) {
+    if (t.includes('сегодня')) {
+        isToday = true;
+        reason = 'содержит "сегодня"';
+    } else if (t.includes('вчера')) {
+        isToday = false;
+        reason = 'содержит "вчера"';
+    } else if (/^\d{1,2}:\d{2}$/.test(t)) {
+        isToday = true;
+        reason = 'формат времени HH:MM';
+    } else if (t.includes('назад')) {
         const m = t.match(/(\d+)\s*(секунд|минут|час)/);
-        if (!m) return true;
-        const n = parseInt(m[1], 10);
-        const ms = m[2] === 'час' ? n * 3600e3 : (m[2] === 'минут' ? n * 60e3 : n * 1e3);
-        return sameDay(new Date(now.getTime() - ms), now);
+        if (!m) {
+            isToday = true;
+            reason = 'содержит "назад" без совпадения ед. изм.';
+        } else {
+            const n = parseInt(m[1], 10);
+            const ms = m[2] === 'час' ? n * 3600e3 : (m[2] === 'минут' ? n * 60e3 : n * 1e3);
+            isToday = sameDay(new Date(now.getTime() - ms), now);
+            reason = `относительное время "${t}" -> sameDay=${isToday}`;
+        }
+    } else {
+        let m = t.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+        if (m) {
+            isToday = sameDay(new Date(+m[3], +m[2] - 1, +m[1]), now);
+            reason = `дата ДД.ММ.ГГГГ "${t}" -> sameDay=${isToday}`;
+        } else {
+            m = t.match(/(\d{1,2})\s+([а-яё]+)/);
+            if (m && typeof RU_MONTHS !== 'undefined' && RU_MONTHS[m[2]] !== undefined) {
+                isToday = sameDay(new Date(now.getFullYear(), RU_MONTHS[m[2]], +m[1]), now);
+                reason = `дата "день месяц" "${t}" -> sameDay=${isToday}`;
+            } else {
+                isToday = true;
+                reason = `неизвестный формат "${t}" -> безопасный fallback TODAY`;
+            }
+        }
     }
 
-    // Формат ДД.ММ.ГГГГ
-    let m = t.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    if (m) return sameDay(new Date(+m[3], +m[2] - 1, +m[1]), now);
-
-    // Формат "24 ноября"
-    m = t.match(/(\d{1,2})\s+([а-яё]+)/);
-    if (m && typeof RU_MONTHS !== 'undefined' && RU_MONTHS[m[2]] !== undefined) {
-        return sameDay(new Date(now.getFullYear(), RU_MONTHS[m[2]], +m[1]), now);
+    if (debug) {
+        console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" | isToday=${isToday} (${reason})`);
     }
-
-    // Незнакомый формат — безопаснее пропустить как сегодняшнюю
-    return true;
+    return isToday;
 }
 
 async function scrollToFirstNonTodayCard(column, handledSet, gen) {
-    for (let step = 0; step < 60; step++) {
+    console.log(`[DBG Scroll] Старт поиска карточки «1 касания» не за сегодня. handledCount=${handledSet.size}`);
+
+    for (let step = 0; step < 80; step++) {
         ensureQueueActive(gen);
 
         const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+        const datesSummary = cards.slice(-8).map(c => {
+            const id = getCardId(c);
+            const d = extractCardDateRaw(c).rawText || '<empty>';
+            return `${id}[${d}]`;
+        });
+
+        console.log(`[DBG Scroll] Шаг ${step}: карточек в DOM=${cards.length} | последние 8: ${datesSummary.join(', ')}`);
+
         const candidate = cards.find(c => {
             const id = getCardId(c);
-            return !handledSet.has(id) && !isCardDateToday(c);
+            if (handledSet.has(id)) return false;
+            const today = isCardDateToday(c, id, true);
+            return !today;
         });
 
         if (candidate) {
-            const dateTxt = (candidate.querySelector('.crm-kanban-item-date')?.innerText || '').trim();
-            console.log(`[Бот Bitrix] Найдена карточка «1 касания» не за сегодня (${getCardId(candidate)}, дата: "${dateTxt}")`);
+            const cid = getCardId(candidate);
+            const rawDate = extractCardDateRaw(candidate).rawText;
+            console.log(`[DBG Scroll] НАЙДЕНА подходящая карточка: id=${cid}, дата="${rawDate}" на шаге ${step}`);
             candidate.scrollIntoView({ block: 'center' });
             await queueSleep(350, gen);
             return candidate;
         }
 
         const scrollers = getKanbanScrollers(column);
-        for (const sc of scrollers) {
+        console.log(`[DBG Scroll] Шаг ${step}: подходящих нет. Найдено скроллеров=${scrollers.length}`);
+
+        for (let idx = 0; idx < scrollers.length; idx++) {
+            const sc = scrollers[idx];
+            const beforeTop = sc.scrollTop;
+            const beforeH = sc.scrollHeight;
             sc.scrollTop = sc.scrollHeight;
             sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+            console.log(`[DBG Scroll]   scroller[${idx}] (${sc.className || sc.tagName}): top ${beforeTop} -> ${sc.scrollTop}, height ${beforeH} -> ${sc.scrollHeight}`);
         }
+
         if (cards.length) {
             cards[cards.length - 1].scrollIntoView({ block: 'end' });
         }
-        await queueSleep(700, gen);
+
+        await queueSleep(900, gen);
+
+        const afterCardsCount = column.querySelectorAll(SELECTORS.bitrix.cards).length;
+        const afterHeights = scrollers.map(sc => sc.scrollHeight);
+        console.log(`[DBG Scroll] После ожидания шага ${step}: карточек=${afterCardsCount}, heights=[${afterHeights.join(', ')}]`);
     }
 
+    console.warn(`[DBG Scroll] Достигнут лимит 80 шагов, финальная проверка DOM...`);
     ensureQueueActive(gen);
     const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-    return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
+    return fallbackCards.find(c => {
+        const id = getCardId(c);
+        return !handledSet.has(id) && !isCardDateToday(c, id, true);
+    }) || null;
 }
 
 function isScrollableEl(el) {
