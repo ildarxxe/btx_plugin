@@ -623,37 +623,6 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
     });
 }
 
-async function scrollToFirstNonTodayCard(column, handledSet, gen) {
-    for (let step = 0; step < 50; step++) {
-        ensureQueueActive(gen);
-
-        const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-        const candidate = cards.find(c => {
-            const id = getCardId(c);
-            return !handledSet.has(id) && !isCardDateToday(c);
-        });
-        if (candidate) {
-            candidate.scrollIntoView({ block: 'center' });
-            await queueSleep(300, gen);
-            return candidate;
-        }
-
-        const scrollers = getKanbanScrollers(column);
-        for (const sc of scrollers) {
-            sc.scrollTop = sc.scrollHeight;
-            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
-        }
-        if (cards.length) {
-            cards[cards.length - 1].scrollIntoView({ block: 'end' });
-        }
-        await queueSleep(700, gen);
-    }
-
-    ensureQueueActive(gen);
-    const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-    return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
-}
-
 async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
     ensureQueueActive(gen);
     const runner = (typeof runBitrixFlow === 'function')
@@ -908,13 +877,19 @@ function proceedToNextCardFromStorage() {
 }
 
 function isCardDateToday(card) {
-    const el = card.querySelector(SELECTORS.bitrix.cardDate);
+    const el = card.querySelector('.crm-kanban-item-date') || card.querySelector(SELECTORS.bitrix.cardDate);
     const t = ((el && el.innerText) || '').trim().toLowerCase();
-    if (!t) return false;
+
+    // Если блок даты не найден или пустой — считаем сегодняшней, чтобы не открыть лишнее
+    if (!t) return true;
+
     const now = new Date();
 
     if (t.includes('сегодня')) return true;
     if (t.includes('вчера')) return false;
+
+    // Если указано только время (например "14:25") или "N минут/часов назад" — проверяем день
+    if (/^\d{1,2}:\d{2}$/.test(t)) return true;
 
     if (t.includes('назад')) {
         const m = t.match(/(\d+)\s*(секунд|минут|час)/);
@@ -924,14 +899,52 @@ function isCardDateToday(card) {
         return sameDay(new Date(now.getTime() - ms), now);
     }
 
+    // Формат ДД.ММ.ГГГГ
     let m = t.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
     if (m) return sameDay(new Date(+m[3], +m[2] - 1, +m[1]), now);
 
+    // Формат "24 ноября"
     m = t.match(/(\d{1,2})\s+([а-яё]+)/);
-    if (m && RU_MONTHS[m[2]] !== undefined) {
+    if (m && typeof RU_MONTHS !== 'undefined' && RU_MONTHS[m[2]] !== undefined) {
         return sameDay(new Date(now.getFullYear(), RU_MONTHS[m[2]], +m[1]), now);
     }
-    return false;
+
+    // Незнакомый формат — безопаснее пропустить как сегодняшнюю
+    return true;
+}
+
+async function scrollToFirstNonTodayCard(column, handledSet, gen) {
+    for (let step = 0; step < 60; step++) {
+        ensureQueueActive(gen);
+
+        const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+        const candidate = cards.find(c => {
+            const id = getCardId(c);
+            return !handledSet.has(id) && !isCardDateToday(c);
+        });
+
+        if (candidate) {
+            const dateTxt = (candidate.querySelector('.crm-kanban-item-date')?.innerText || '').trim();
+            console.log(`[Бот Bitrix] Найдена карточка «1 касания» не за сегодня (${getCardId(candidate)}, дата: "${dateTxt}")`);
+            candidate.scrollIntoView({ block: 'center' });
+            await queueSleep(350, gen);
+            return candidate;
+        }
+
+        const scrollers = getKanbanScrollers(column);
+        for (const sc of scrollers) {
+            sc.scrollTop = sc.scrollHeight;
+            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }
+        if (cards.length) {
+            cards[cards.length - 1].scrollIntoView({ block: 'end' });
+        }
+        await queueSleep(700, gen);
+    }
+
+    ensureQueueActive(gen);
+    const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+    return fallbackCards.find(c => !handledSet.has(getCardId(c)) && !isCardDateToday(c)) || null;
 }
 
 function isScrollableEl(el) {
