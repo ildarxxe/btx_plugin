@@ -877,7 +877,9 @@ function proceedToNextCardFromStorage() {
 function extractCardDateRaw(card) {
     const byLastActivityAgo = card.querySelector('.crm-kanban-item-last-activity-time-ago');
     const byLastActivityBox = card.querySelector('.crm-kanban-item-last-activity-time');
-    const byConfig = SELECTORS?.bitrix?.cardDate ? card.querySelector(SELECTORS.bitrix.cardDate) : null;
+    const byConfig = (typeof SELECTORS !== 'undefined' && SELECTORS?.bitrix?.cardDate)
+        ? card.querySelector(SELECTORS.bitrix.cardDate)
+        : null;
     const byItemDate = card.querySelector('.crm-kanban-item-date');
 
     const el = byLastActivityAgo || byLastActivityBox || byConfig || byItemDate;
@@ -900,58 +902,33 @@ function isCardDateToday(card, cardId = '', debug = false) {
     const info = extractCardDateRaw(card);
     const t = info.normText;
 
+    // Если пусто — безопаснее считать сегодняшней, чтобы не дёрнуть лишнюю карточку
     if (!t) {
-        if (debug) {
-            console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | text="" -> TODAY (пусто)`);
-        }
+        if (debug) console.log(`[DBG Дата] card=${cardId} | пусто -> TODAY`);
         return true;
     }
 
-    const now = new Date();
-    let isToday = false;
-    let reason = '';
-
+    // Явно «сегодня» (включая «Сегодня 17:36»)
     if (t.includes('сегодня')) {
-        isToday = true;
-        reason = `содержит "сегодня" (${info.selectorUsed})`;
-    } else if (t.includes('вчера')) {
-        isToday = false;
-        reason = `содержит "вчера" (${info.selectorUsed})`;
-    } else if (/^\d{1,2}:\d{2}$/.test(t)) {
-        isToday = true;
-        reason = `только время HH:MM (${info.selectorUsed})`;
-    } else if (t.includes('назад')) {
-        const m = t.match(/(\d+)\s*(секунд|минут|час)/);
-        if (!m) {
-            isToday = true;
-            reason = 'содержит "назад" без совпадения ед. изм.';
-        } else {
-            const n = parseInt(m[1], 10);
-            const ms = m[2] === 'час' ? n * 3600e3 : (m[2] === 'минут' ? n * 60e3 : n * 1e3);
-            isToday = sameDay(new Date(now.getTime() - ms), now);
-            reason = `относительное время "${t}" -> sameDay=${isToday}`;
-        }
-    } else {
-        let m = t.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-        if (m) {
-            isToday = sameDay(new Date(+m[3], +m[2] - 1, +m[1]), now);
-            reason = `дата ДД.ММ.ГГГГ "${t}" -> sameDay=${isToday}`;
-        } else {
-            m = t.match(/(\d{1,2})\s+([а-яё]+)/);
-            if (m && typeof RU_MONTHS !== 'undefined' && RU_MONTHS[m[2]] !== undefined) {
-                isToday = sameDay(new Date(now.getFullYear(), RU_MONTHS[m[2]], +m[1]), now);
-                reason = `дата "день месяц" "${t}" -> sameDay=${isToday}`;
-            } else {
-                isToday = true;
-                reason = `неизвестный формат "${t}" -> безопасный fallback TODAY`;
-            }
-        }
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY`);
+        return true;
     }
 
-    if (debug) {
-        console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | raw="${info.rawText}" | isToday=${isToday} (${reason})`);
+    // Только время «17:36» — это тоже за сегодня
+    if (/^\d{1,2}:\d{2}$/.test(t)) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (время)`);
+        return true;
     }
-    return isToday;
+
+    // Относительное время в секундах/минутах/часах назад (например «15 минут назад», «2 часа назад»)
+    if (/назад/.test(t) && /(секунд|минут|час)/.test(t)) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (часы/минуты назад)`);
+        return true;
+    }
+
+    // Всё остальное («вчера», «12 Ноя», «15 Окт», даты и т.д.) — НЕ сегодня, можно брать
+    if (debug) console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | raw="${info.rawText}" -> NOT TODAY`);
+    return false;
 }
 
 async function scrollToFirstNonTodayCard(column, handledSet, gen) {
