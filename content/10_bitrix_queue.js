@@ -548,7 +548,7 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
             'position:fixed',
             'left:20px',
             'top:25%',
-            'width:310px',
+            'width:320px',
             'z-index:2147483647',
             'background:#1c2129',
             'color:#fff',
@@ -571,20 +571,30 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
                 <button id="elki-confirm-yes" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;cursor:pointer;">Да (Enter)</button>
                 <button id="elki-confirm-no" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Нет (Esc)</button>
             </div>
-            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и перевести · Esc — закрыть и пропустить</div>
+            <button id="elki-confirm-close-deal" type="button" style="width:100%;padding:7px 8px;margin-bottom:8px;border:1px solid #7f1d1d;border-radius:6px;background:#450a0a;color:#fecaca;font-weight:700;font-size:12px;cursor:pointer;">Нет и закрыть (Ctrl+Esc)</button>
+            <div style="font-size:11px;color:#94a3b8;">Enter — отправить · Esc — пропустить · Ctrl+Esc — закрыть сделку</div>
         `;
 
-        document.body.appendChild(box);
+        (document.body || document.documentElement).appendChild(box);
 
         let settled = false;
         let pollId = null;
+
+        const cleanupDocs = () => {
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            try {
+                if (typeof getAllDocuments === 'function') {
+                    getAllDocuments().forEach(d => d.removeEventListener('keydown', onKeyDown, true));
+                }
+            } catch (e) {}
+        };
 
         const finish = (answer) => {
             if (settled) return;
             settled = true;
             clearInterval(pollId);
-            window.removeEventListener('keydown', onKeyDown, true);
-            document.removeEventListener('keydown', onKeyDown, true);
+            cleanupDocs();
             removeLeftConfirmModal();
             resolve(answer);
         };
@@ -601,12 +611,21 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
             } else if (e.key === 'Escape' || e.code === 'Escape') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                finish(false);
+                if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+                    finish('close_deal');
+                } else {
+                    finish('skip');
+                }
             }
         };
 
         window.addEventListener('keydown', onKeyDown, true);
         document.addEventListener('keydown', onKeyDown, true);
+        try {
+            if (typeof getAllDocuments === 'function') {
+                getAllDocuments().forEach(d => d.addEventListener('keydown', onKeyDown, true));
+            }
+        } catch (e) {}
 
         pollId = setInterval(() => {
             if (!isRunActive(gen)) {
@@ -616,8 +635,10 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
 
         const yesBtn = box.querySelector('#elki-confirm-yes');
         const noBtn = box.querySelector('#elki-confirm-no');
+        const closeDealBtn = box.querySelector('#elki-confirm-close-deal');
         if (yesBtn) yesBtn.addEventListener('click', () => finish(true));
-        if (noBtn) noBtn.addEventListener('click', () => finish(false));
+        if (noBtn) noBtn.addEventListener('click', () => finish('skip'));
+        if (closeDealBtn) closeDealBtn.addEventListener('click', () => finish('close_deal'));
     });
 }
 
@@ -834,10 +855,26 @@ async function processNextCard(gen = runGeneration) {
         }
         ensureQueueActive(gen);
 
-        if (!answer) {
+        if (answer === 'skip' || answer === false) {
             console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
             await addHandledCardId(cardId);
             await closeChatAndCard();
+            processNextCard(gen);
+            return;
+        }
+
+        if (answer === 'close_deal') {
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] Выбрано «Нет и закрыть» (Ctrl+Esc) — без отправки, закрываем сделку.`);
+            pressEscapeEverywhere();
+            await queueSleep(500, gen);
+            ensureQueueActive(gen);
+
+            const closed = await moveCardToStage('close', gen);
+            if (!closed) return;
+            ensureQueueActive(gen);
+
+            await addHandledCardId(cardId);
+            await returnToCRMAndEscape();
             processNextCard(gen);
             return;
         }
