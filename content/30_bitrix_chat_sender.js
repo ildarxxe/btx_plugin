@@ -114,15 +114,31 @@ function base64ToFile(dataUrlOrBase64, fileName, mimeType) {
 }
 
 async function fetchDefaultPriceFile() {
-    console.log('[DBG Sender] Скачиваем дефолтный файл:', PRICE_FILE_PATH);
-    const resp = await fetch(PRICE_FILE_PATH + '?t=' + Date.now(), { cache: 'no-store' });
-    if (!resp.ok) {
-        throw new Error(`Не удалось скачать дефолтный файл (${resp.status})`);
+    const url = PRICE_FILE_PATH + '?t=' + Date.now();
+    console.log('[DBG Sender] Скачиваем дефолтный файл:', url);
+
+    const controller = new AbortController();
+    const timerId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+        const resp = await fetch(url, {
+            cache: 'no-store',
+            mode: 'cors',
+            signal: controller.signal
+        });
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status} при загрузке ${url}`);
+        }
+        const blob = await resp.blob();
+        const randomName = PRICE_FILE_NAMES[Math.floor(Math.random() * PRICE_FILE_NAMES.length)] || 'price.pdf';
+        console.log('[DBG Sender] Дефолтный файл получен:', randomName, 'size:', blob.size);
+        return new File([blob], randomName, { type: blob.type || 'application/pdf', lastModified: Date.now() });
+    } catch (err) {
+        console.error('[DBG Sender] Ошибка fetchDefaultPriceFile:', err);
+        throw err;
+    } finally {
+        clearTimeout(timerId);
     }
-    const blob = await resp.blob();
-    const randomName = PRICE_FILE_NAMES[Math.floor(Math.random() * PRICE_FILE_NAMES.length)] || 'price.pdf';
-    console.log('[DBG Sender] Дефолтный файл получен:', randomName, 'size:', blob.size);
-    return new File([blob], randomName, { type: blob.type || 'application/pdf', lastModified: Date.now() });
 }
 
 async function loadPriceFileDataTransfer(stepItem = null) {
