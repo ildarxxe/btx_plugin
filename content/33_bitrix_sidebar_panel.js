@@ -200,7 +200,7 @@
         ].join(';');
         closeBtn.addEventListener('click', () => setDrawerOpen(false));
 
-        controlsWrap.append(touch1TargetSelect, resetQueueBtn, popoutBtn, closeBtn);
+        controlsWrap.append(touch1TargetSelect, resetQueueBtn, closeBtn);
         topBar.append(titleSpan, controlsWrap);
 
         const iframe = document.createElement('iframe');
@@ -336,7 +336,11 @@
         }
 
         if (payload.action === 'STOP_BOT_FROM_POPUP') {
-            stopBot('кнопка СТОП в панели');
+            if (typeof forceStopAutomation === 'function') {
+                forceStopAutomation('кнопка СТОП в панели');
+            } else {
+                stopBot('кнопка СТОП в панели');
+            }
         }
     });
 

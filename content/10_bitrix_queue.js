@@ -1,6 +1,6 @@
 // =====================================================================================
 // МОДУЛЬ 10_bitrix_queue.js
-// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат или СМС «Сообщение» -> пауза 2с/Esc -> отправка)
+// BITRIX: ОЧЕРЕДЬ ЗАЯВОК (открыть заявку -> чат или СМС «Сообщение» -> пауза 4с/Esc -> отправка)
 // =====================================================================================
 
 const LEFT_CONFIRM_MODAL_ID = 'elki-touch1-left-confirm-modal';
@@ -19,6 +19,18 @@ const RUN_HOTKEYS = {
         keys: new Set(['-', '–', '—'])
     }
 };
+
+function clearBusyFlags() {
+    bitrixChatSending = false;
+    try {
+        if (typeof customFlowBusy !== 'undefined') {
+            customFlowBusy = false;
+        }
+    } catch (e) {}
+    try {
+        window.customFlowBusy = false;
+    } catch (e) {}
+}
 
 function isRunActive(gen = runGeneration) {
     return gen === runGeneration && isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
@@ -67,6 +79,7 @@ async function resetQueue() {
     currentCardId = null;
     cardAttempts = {};
     columnPreloaded = false;
+    clearBusyFlags();
     await chrome.storage.local.set({ [HANDLED_CARDS_STORAGE_KEY]: [] });
     try {
         if (typeof GM_setValue === 'function') {
@@ -103,10 +116,7 @@ function resetBotRuntimeState() {
     currentCardId = null;
     cardAttempts = {};
     columnPreloaded = false;
-    bitrixChatSending = false;
-    if (typeof customFlowBusy !== 'undefined') {
-        customFlowBusy = false;
-    }
+    clearBusyFlags();
     removeLeftConfirmModal();
     removeNewSkipBanner();
 }
@@ -431,9 +441,9 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     return true;
 }
 
-// Пауза 2 сек перед первым сообщением только в рассылке «Новые»:
+// Пауза перед первым сообщением только в рассылке «Новые»:
 // если нажать Esc — возвращает { skipped: true }, иначе { skipped: false }
-function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 2000) {
+function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 4000) {
     return new Promise((resolve) => {
         removeNewSkipBanner();
 
@@ -956,6 +966,7 @@ async function processNextCard(gen = runGeneration) {
 
         console.log(`[Бот Bitrix] [Заявка ${cardId}] 2. Заходим в чат...`);
         const chatOpened = await openBitrixChatForCard(cardId, false);
+        console.log(`[Бот Bitrix] [Заявка ${cardId}] Результат открытия чата: chatOpened=${chatOpened}`);
         ensureQueueActive(gen);
 
         if (!chatOpened) {
@@ -1013,6 +1024,7 @@ async function processNextCard(gen = runGeneration) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате найдено исходящее СМС из Битрикс24 — отправим сценарий без 1-го приветственного сообщения.`);
             }
 
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] 3. Пауза 4 сек перед отправкой (Esc для пропуска)...`);
             const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 4000);
             if (waitRes.aborted) return;
             ensureQueueActive(gen);
@@ -1025,10 +1037,12 @@ async function processNextCard(gen = runGeneration) {
                 return;
             }
 
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] 4. Проверяем кнопку «Ответить» / поле ввода...`);
             const inputReady = await clickReplyIfPresentInOpenChat(cardId, gen);
             ensureQueueActive(gen);
             if (!inputReady) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
 
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] 5. Отправляем сценарий firstTouch...`);
             await sendSavedFlowInBitrixChat('firstTouch', gen, { skipFirstText: smsAlreadySentInChat });
             await queueSleep(600, gen);
 
@@ -1137,7 +1151,7 @@ async function processNextCard(gen = runGeneration) {
         await returnToCRMAndEscape();
         processNextCard(gen);
     } catch (e) {
-        bitrixChatSending = false;
+        clearBusyFlags();
         if (e && e.message === 'BOT_ABORTED') {
             return;
         }
