@@ -27,7 +27,7 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
     };
 }
 
-console.warn('[BOT BUILD CHECK] 4.0', window.location.href);
+console.warn('[BOT BUILD CHECK] 5.0', window.location.href);
 
 const PRICE_FILE_PATH = 'https://ildarxxe.github.io/btx_plugin/price.pdf';
 
@@ -58,7 +58,8 @@ const CUSTOM_FLOW_STORAGE_KEY = 'elki_custom_flow_v1';
 
 const DEFAULT_HOTKEYS = {
     firstTouch: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Enter', label: 'Ctrl+Alt+Enter' },
-    touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' }
+    touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' },
+    touch2: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }
 };
 
 const DEFAULT_CUSTOM_FLOWS = {
@@ -72,6 +73,11 @@ const DEFAULT_CUSTOM_FLOWS = {
     touch1: {
         items: [
             { id: 't1_1', type: 'text', text: MESSAGE_VARIANTS.msg3[0] }
+        ]
+    },
+    touch2: {
+        items: [
+            { id: 't2_1', type: 'text', text: "Здравствуйте! Напоминаю о себе — остались ли вопросы по прайсу и моделям ёлочек? 🎄" }
         ]
     }
 };
@@ -90,6 +96,7 @@ const SELECTORS = {
     bitrix: {
         newColumn: '[data-testid="kanban-column-C13:NEW"]',
         touchColumn: '[data-testid="kanban-column-C13:UC_QUTSPY"]',
+        touch2Column: '[data-testid="kanban-column-C13:UC_LOXVY8"]',
         cards: '.main-kanban-item',
         cardDate: '.crm-kanban-item-last-activity-time-ago, .crm-kanban-item-last-activity-time, .crm-kanban-item-date',
         phoneWidget: '.crm-entity-widget-client-contact-phone',

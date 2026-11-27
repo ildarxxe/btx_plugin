@@ -15,6 +15,7 @@
     const FRAME_ID = 'elki-sidebar-frame';
     const RUN_MODE_KEY = 'btx_run_mode';
     const TOUCH1_TARGET_KEY = 'btx_touch1_target_stage';
+    const VALID_RUN_MODES = new Set(['new', 'touch1', 'touch2']);
 
     let isOpen = false;
 
@@ -22,14 +23,14 @@
         try {
             if (typeof GM_getValue === 'function') {
                 const v = GM_getValue(RUN_MODE_KEY);
-                if (v === 'new' || v === 'touch1') return v;
+                if (VALID_RUN_MODES.has(v)) return v;
             }
         } catch (e) {}
-        return BOT_CONFIG.runMode || 'new';
+        return VALID_RUN_MODES.has(BOT_CONFIG.runMode) ? BOT_CONFIG.runMode : 'new';
     }
 
     function writeSavedRunMode(mode) {
-        if (mode !== 'new' && mode !== 'touch1') return;
+        if (!VALID_RUN_MODES.has(mode)) return;
         BOT_CONFIG.runMode = mode;
         try {
             if (typeof GM_setValue === 'function') {

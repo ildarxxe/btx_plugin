@@ -6,11 +6,17 @@
 let customFlowState = {
     hotkeys: {
         firstTouch: { ...DEFAULT_HOTKEYS.firstTouch },
-        touch1: { ...DEFAULT_HOTKEYS.touch1 }
+        touch1: { ...DEFAULT_HOTKEYS.touch1 },
+        touch2: { ...(DEFAULT_HOTKEYS.touch2 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }) }
     },
     flows: {
         firstTouch: { items: DEFAULT_CUSTOM_FLOWS.firstTouch.items.map(x => ({ ...x })) },
-        touch1: { items: DEFAULT_CUSTOM_FLOWS.touch1.items.map(x => ({ ...x })) }
+        touch1: { items: DEFAULT_CUSTOM_FLOWS.touch1.items.map(x => ({ ...x })) },
+        touch2: {
+            items: (DEFAULT_CUSTOM_FLOWS.touch2 && Array.isArray(DEFAULT_CUSTOM_FLOWS.touch2.items))
+                ? DEFAULT_CUSTOM_FLOWS.touch2.items.map(x => ({ ...x }))
+                : [{ id: 't2_1', type: 'text', text: '' }]
+        }
     }
 };
 
@@ -44,7 +50,11 @@ function applySavedFlowObject(saved) {
     customFlowState = {
         hotkeys: {
             firstTouch: { ...DEFAULT_HOTKEYS.firstTouch, ...(saved.hotkeys && saved.hotkeys.firstTouch) },
-            touch1: { ...DEFAULT_HOTKEYS.touch1, ...(saved.hotkeys && saved.hotkeys.touch1) }
+            touch1: { ...DEFAULT_HOTKEYS.touch1, ...(saved.hotkeys && saved.hotkeys.touch1) },
+            touch2: {
+                ...(DEFAULT_HOTKEYS.touch2 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }),
+                ...(saved.hotkeys && saved.hotkeys.touch2)
+            }
         },
         flows: {
             firstTouch: {
@@ -56,6 +66,11 @@ function applySavedFlowObject(saved) {
                 items: Array.isArray(saved.flows && saved.flows.touch1 && saved.flows.touch1.items)
                     ? saved.flows.touch1.items.map(x => ({ ...x }))
                     : DEFAULT_CUSTOM_FLOWS.touch1.items.map(x => ({ ...x }))
+            },
+            touch2: {
+                items: Array.isArray(saved.flows && saved.flows.touch2 && saved.flows.touch2.items)
+                    ? saved.flows.touch2.items.map(x => ({ ...x }))
+                    : (DEFAULT_CUSTOM_FLOWS.touch2 ? DEFAULT_CUSTOM_FLOWS.touch2.items.map(x => ({ ...x })) : [])
             }
         }
     };
@@ -223,12 +238,21 @@ function onCustomBitrixHotkey(e) {
     if (!location.hostname.includes('bitrix24')) return;
     const hkFirst = customFlowState.hotkeys.firstTouch;
     const hkTouch1 = customFlowState.hotkeys.touch1;
+    const hkTouch2 = customFlowState.hotkeys.touch2;
 
     if (matchesHotkey(e, hkTouch1)) {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (e.repeat) return;
         runBitrixFlow('touch1');
+        return;
+    }
+
+    if (matchesHotkey(e, hkTouch2)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        runBitrixFlow('touch2');
         return;
     }
 

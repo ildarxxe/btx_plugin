@@ -14,7 +14,8 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('DOMContentLoaded', () => {
     const DEFAULT_HOTKEYS = {
         firstTouch: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Enter', label: 'Ctrl+Alt+Enter' },
-        touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' }
+        touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' },
+        touch2: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }
     };
 
     const DEFAULT_ITEMS = {
@@ -25,7 +26,22 @@ document.addEventListener('DOMContentLoaded', () => {
         ],
         touch1: [
             { id: 't1_1', type: 'text', text: 'Здравствуйте! Хотела узнать, удалось ли Вам посмотреть наш прайс-лист? Может, уже присмотрели себе ёлочку? Если есть вопросы или нужна помощь с выбором, я с удовольствием подскажу и помогу найти ту самую ёлочку для Вашего дома 🎄🤗' }
+        ],
+        touch2: [
+            { id: 't2_1', type: 'text', text: 'Здравствуйте! Напоминаю о себе — остались ли вопросы по прайсу и моделям ёлочек? 🎄' }
         ]
+    };
+
+    const EDITOR_TITLES = {
+        firstTouch: 'Новым: сценарий',
+        touch1: '1-му касанию: сценарий',
+        touch2: '2-му касанию: сценарий'
+    };
+
+    const MODE_LABELS = {
+        new: 'Новая',
+        touch1: '1 касание',
+        touch2: '2 касание'
     };
 
     const views = {
@@ -45,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToHomeBtn = document.getElementById('backToHomeBtn');
     const pickFirstTouchBtn = document.getElementById('pickFirstTouchBtn');
     const pickTouch1Btn = document.getElementById('pickTouch1Btn');
+    const pickTouch2Btn = document.getElementById('pickTouch2Btn');
     const backToChooseBtn = document.getElementById('backToChooseBtn');
 
     const editorTitle = document.getElementById('editorTitle');
@@ -69,11 +86,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let flowConfig = {
         hotkeys: {
             firstTouch: { ...DEFAULT_HOTKEYS.firstTouch },
-            touch1: { ...DEFAULT_HOTKEYS.touch1 }
+            touch1: { ...DEFAULT_HOTKEYS.touch1 },
+            touch2: { ...DEFAULT_HOTKEYS.touch2 }
         },
         flows: {
             firstTouch: { items: DEFAULT_ITEMS.firstTouch.map(x => ({ ...x })) },
-            touch1: { items: DEFAULT_ITEMS.touch1.map(x => ({ ...x })) }
+            touch1: { items: DEFAULT_ITEMS.touch1.map(x => ({ ...x })) },
+            touch2: { items: DEFAULT_ITEMS.touch2.map(x => ({ ...x })) }
         }
     };
 
@@ -124,7 +143,8 @@ document.addEventListener('DOMContentLoaded', () => {
         flowConfig = {
             hotkeys: {
                 firstTouch: { ...DEFAULT_HOTKEYS.firstTouch, ...(incoming.hotkeys && incoming.hotkeys.firstTouch) },
-                touch1: { ...DEFAULT_HOTKEYS.touch1, ...(incoming.hotkeys && incoming.hotkeys.touch1) }
+                touch1: { ...DEFAULT_HOTKEYS.touch1, ...(incoming.hotkeys && incoming.hotkeys.touch1) },
+                touch2: { ...DEFAULT_HOTKEYS.touch2, ...(incoming.hotkeys && incoming.hotkeys.touch2) }
             },
             flows: {
                 firstTouch: {
@@ -136,6 +156,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     items: Array.isArray(incoming.flows && incoming.flows.touch1 && incoming.flows.touch1.items)
                         ? incoming.flows.touch1.items.map(x => ({ ...x }))
                         : DEFAULT_ITEMS.touch1.map(x => ({ ...x }))
+                },
+                touch2: {
+                    items: Array.isArray(incoming.flows && incoming.flows.touch2 && incoming.flows.touch2.items)
+                        ? incoming.flows.touch2.items.map(x => ({ ...x }))
+                        : DEFAULT_ITEMS.touch2.map(x => ({ ...x }))
                 }
             }
         };
@@ -336,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function openEditor(flowKey) {
         currentFlowKey = flowKey;
         editorStatus.textContent = '';
-        editorTitle.textContent = flowKey === 'firstTouch' ? 'Новым: сценарий' : '1-му касанию: сценарий';
+        editorTitle.textContent = EDITOR_TITLES[flowKey] || 'Редактор';
         const hk = flowConfig.hotkeys[flowKey] || DEFAULT_HOTKEYS[flowKey];
         hotkeyInput.value = hk.label || '';
         renderSteps();
@@ -347,6 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (backToHomeBtn) backToHomeBtn.addEventListener('click', () => showView('home'));
     if (pickFirstTouchBtn) pickFirstTouchBtn.addEventListener('click', () => openEditor('firstTouch'));
     if (pickTouch1Btn) pickTouch1Btn.addEventListener('click', () => openEditor('touch1'));
+    if (pickTouch2Btn) pickTouch2Btn.addEventListener('click', () => openEditor('touch2'));
     if (backToChooseBtn) backToChooseBtn.addEventListener('click', () => showView('choose'));
 
     if (recordHotkeyBtn) {
@@ -499,27 +525,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (startBtn) {
-        startBtn.addEventListener('click', () => {
-            const config = {
-                runMode: modeSelect.value,
-                useTestPhone: testModeCheck.checked,
-                testPhone: testPhoneInput.value.trim(),
-                isPaused: false
-            };
-
-            statusText.innerText = 'Запуск скрипта в Битриксе...';
-            statusText.style.color = '#1ebe5d';
-
-            postToParent({
-                action: 'SAVE_RUN_CONFIG_AND_START',
-                config
-            });
-
-            statusText.innerText = 'Команда отправлена. Не закрывайте вкладки.';
-        });
-    }
-
     if (stopBtn) {
         stopBtn.addEventListener('click', () => {
             statusText.innerText = 'Остановлено пользователем.';
@@ -549,7 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
         modeSelect.addEventListener('change', () => {
             persistRunConfig();
             if (statusText) {
-                statusText.textContent = `Выбрана колонка: ${modeSelect.value === 'touch1' ? '1 касание' : 'Новая'}`;
+                statusText.textContent = `Выбрана колонка: ${MODE_LABELS[modeSelect.value] || modeSelect.value}`;
                 statusText.style.color = '#1ebe5d';
             }
         });

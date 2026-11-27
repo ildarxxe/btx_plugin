@@ -117,9 +117,12 @@ function startAutomation() {
     const gen = runGeneration;
     isScriptRunning = true;
     BOT_CONFIG.isPaused = false;
+    const modeTitle = BOT_CONFIG.runMode === 'new'
+        ? 'Новые'
+        : (BOT_CONFIG.runMode === 'touch2' ? '2 касание' : '1 касание');
     console.log(`[Бот Bitrix] Старт рассылки. Режим: ${BOT_CONFIG.runMode}`);
     if (typeof showBotToast === 'function') {
-        showBotToast(`Рассылка запущена (${BOT_CONFIG.runMode === 'new' ? 'Новые' : '1 касание'}) ▶`);
+        showBotToast(`Рассылка запущена (${modeTitle}) ▶`);
     }
     processNextCard(gen);
 }
@@ -217,8 +220,7 @@ function hasOutgoingBitrixSmsInChat() {
     });
 }
 
-// Ждём появления кнопки «Ответить» или активного поля ввода до 7 сек (на случай долгой прогрузки чата)
-// Ждём появления кнопки «Ответить» или активного поля ввода до 7 сек; после клика по «Ответить» ждём активации поля ввода
+// Ждём появления кнопки «Ответить» или активного поля ввода до 12 сек; после клика ждём активации поля ввода
 async function clickReplyIfPresentInOpenChat(cardId, gen) {
     ensureQueueActive(gen);
 
@@ -242,9 +244,6 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
         return (ta && !ta.disabled) ? ta : null;
     };
 
-    // Ждём до 12 сек: если поле ввода уже активно — кнопки «Ответить» не было (или уже нажата);
-    // если есть «Ответить» — жмём (повтор не чаще раза в 3 сек), пока не появится активное поле.
-    // true — только когда поле ввода реально готово; false — поле так и не появилось.
     const deadline = Date.now() + 12000;
     let lastClickAt = 0;
     while (Date.now() < deadline) {
@@ -533,6 +532,10 @@ async function exitChatToDetailsThenList(gen) {
     await queueSleep(600, gen);
 }
 
+// Подтверждение для 1-го касания:
+// true — отправить и перевести (Enter)
+// 'skip' — закрыть и пропустить (Esc)
+// 'close_deal' — не отправлять и закрыть сделку (Ctrl+Esc)
 function askTouch1SendConfirmation(cardId, titleText, gen) {
     return new Promise((resolve) => {
         removeLeftConfirmModal();
@@ -642,6 +645,201 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
     });
 }
 
+// Подтверждение для 2-го касания:
+// 'send_close' — отправить и перевести в «Закрыто» (Enter)
+// 'skip' — закрыть и пропустить (Esc)
+// 'send_touch3' — отправить и перевести в «3 касание» (Ctrl+Esc)
+function askTouch2SendConfirmation(cardId, titleText, gen) {
+    return new Promise((resolve) => {
+        removeLeftConfirmModal();
+
+        if (!isRunActive(gen)) {
+            resolve(null);
+            return;
+        }
+
+        const box = document.createElement('div');
+        box.id = LEFT_CONFIRM_MODAL_ID;
+        box.style.cssText = [
+            'position:fixed',
+            'left:20px',
+            'top:25%',
+            'width:325px',
+            'z-index:2147483647',
+            'background:#1c2129',
+            'color:#fff',
+            'border:1px solid #384152',
+            'border-radius:10px',
+            'padding:14px',
+            'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+            'font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
+        ].join(';');
+
+        box.innerHTML = `
+            <div style="font-weight:700;font-size:14px;margin-bottom:6px;">2 касание — делать рассылку?</div>
+            <div style="font-size:12px;color:#cbd5e1;margin-bottom:8px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="font-size:11px;color:#93c5fd;margin-bottom:10px;">Enter → <b>Закрыто</b> · Ctrl+Esc → <b>3 касание</b></div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button id="elki-t2-send-close" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;cursor:pointer;">Отправить и закрыть (Enter)</button>
+                <button id="elki-t2-skip" type="button" style="padding:8px 10px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Нет (Esc)</button>
+            </div>
+            <button id="elki-t2-send-touch3" type="button" style="width:100%;padding:7px 8px;margin-bottom:8px;border:1px solid #2563eb;border-radius:6px;background:#172554;color:#bfdbfe;font-weight:700;font-size:12px;cursor:pointer;">Отправить и в 3 касание (Ctrl+Esc)</button>
+            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и закрыть · Esc — пропустить · Ctrl+Esc — отправить и в 3 касание</div>
+        `;
+
+        (document.body || document.documentElement).appendChild(box);
+
+        let settled = false;
+        let pollId = null;
+
+        const cleanupDocs = () => {
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            try {
+                if (typeof getAllDocuments === 'function') {
+                    getAllDocuments().forEach(d => d.removeEventListener('keydown', onKeyDown, true));
+                }
+            } catch (e) {}
+        };
+
+        const finish = (answer) => {
+            if (settled) return;
+            settled = true;
+            clearInterval(pollId);
+            cleanupDocs();
+            removeLeftConfirmModal();
+            resolve(answer);
+        };
+
+        const onKeyDown = (e) => {
+            if (!isRunActive(gen)) {
+                finish(null);
+                return;
+            }
+            if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                finish('send_close');
+            } else if (e.key === 'Escape' || e.code === 'Escape') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+                    finish('send_touch3');
+                } else {
+                    finish('skip');
+                }
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        try {
+            if (typeof getAllDocuments === 'function') {
+                getAllDocuments().forEach(d => d.addEventListener('keydown', onKeyDown, true));
+            }
+        } catch (e) {}
+
+        pollId = setInterval(() => {
+            if (!isRunActive(gen)) {
+                finish(null);
+            }
+        }, 150);
+
+        const sendCloseBtn = box.querySelector('#elki-t2-send-close');
+        const skipBtn = box.querySelector('#elki-t2-skip');
+        const sendTouch3Btn = box.querySelector('#elki-t2-send-touch3');
+        if (sendCloseBtn) sendCloseBtn.addEventListener('click', () => finish('send_close'));
+        if (skipBtn) skipBtn.addEventListener('click', () => finish('skip'));
+        if (sendTouch3Btn) sendTouch3Btn.addEventListener('click', () => finish('send_touch3'));
+    });
+}
+
+function extractCardDateRaw(card) {
+    const byLastActivityAgo = card.querySelector('.crm-kanban-item-last-activity-time-ago');
+    const byLastActivityBox = card.querySelector('.crm-kanban-item-last-activity-time');
+    const byConfig = (typeof SELECTORS !== 'undefined' && SELECTORS?.bitrix?.cardDate)
+        ? card.querySelector(SELECTORS.bitrix.cardDate)
+        : null;
+    const byItemDate = card.querySelector('.crm-kanban-item-date');
+
+    const el = byLastActivityAgo || byLastActivityBox || byConfig || byItemDate;
+    const selectorUsed = byLastActivityAgo
+        ? '.crm-kanban-item-last-activity-time-ago'
+        : (byLastActivityBox
+            ? '.crm-kanban-item-last-activity-time'
+            : (byConfig ? SELECTORS.bitrix.cardDate : (byItemDate ? '.crm-kanban-item-date' : 'none')));
+
+    const rawText = el ? (el.innerText || el.textContent || '') : '';
+    return {
+        elFound: Boolean(el),
+        selectorUsed,
+        rawText: rawText.trim(),
+        normText: rawText.trim().toLowerCase()
+    };
+}
+
+function isCardDateToday(card, cardId = '', debug = false) {
+    const info = extractCardDateRaw(card);
+    const t = info.normText;
+
+    if (!t) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | пусто -> TODAY`);
+        return true;
+    }
+
+    if (t.includes('сегодня')) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY`);
+        return true;
+    }
+
+    if (/^\d{1,2}:\d{2}$/.test(t)) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (время)`);
+        return true;
+    }
+
+    if (/назад/.test(t) && /(секунд|минут|час)/.test(t)) {
+        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (часы/минуты назад)`);
+        return true;
+    }
+
+    if (debug) console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | raw="${info.rawText}" -> NOT TODAY`);
+    return false;
+}
+
+async function scrollToFirstNonTodayCard(column, handledSet, gen) {
+    for (let step = 0; step < 80; step++) {
+        ensureQueueActive(gen);
+
+        const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+        const candidate = cards.find(c => {
+            const id = getCardId(c);
+            return !handledSet.has(id) && !isCardDateToday(c, id, true);
+        });
+        if (candidate) {
+            candidate.scrollIntoView({ block: 'center' });
+            await queueSleep(350, gen);
+            return candidate;
+        }
+
+        const scrollers = getKanbanScrollers(column);
+        for (const sc of scrollers) {
+            sc.scrollTop = sc.scrollHeight;
+            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }
+        if (cards.length) {
+            cards[cards.length - 1].scrollIntoView({ block: 'end' });
+        }
+        await queueSleep(900, gen);
+    }
+
+    ensureQueueActive(gen);
+    const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
+    return fallbackCards.find(c => {
+        const id = getCardId(c);
+        return !handledSet.has(id) && !isCardDateToday(c, id, true);
+    }) || null;
+}
+
 async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
     ensureQueueActive(gen);
     const runner = (typeof runBitrixFlow === 'function')
@@ -671,7 +869,14 @@ async function processNextCard(gen = runGeneration) {
         ensureQueueActive(gen);
 
         const isNewMode = BOT_CONFIG.runMode === 'new';
-        const columnSelector = isNewMode ? SELECTORS.bitrix.newColumn : SELECTORS.bitrix.touchColumn;
+        const isTouch2Mode = BOT_CONFIG.runMode === 'touch2';
+
+        const columnSelector = isNewMode
+            ? SELECTORS.bitrix.newColumn
+            : (isTouch2Mode
+                ? (SELECTORS.bitrix.touch2Column || '[data-testid="kanban-column-C13:UC_LOXVY8"]')
+                : SELECTORS.bitrix.touchColumn);
+
         const column = document.querySelector(columnSelector);
 
         if (!column) {
@@ -698,7 +903,8 @@ async function processNextCard(gen = runGeneration) {
         } else {
             card = await scrollToFirstNonTodayCard(column, handledSet, gen);
             if (!card) {
-                alert("В колонке «1 касание» нет заявок с датой не «сегодня» для обработки.");
+                const colLabel = isTouch2Mode ? '2 касание' : '1 касание';
+                alert(`В колонке «${colLabel}» нет заявок с датой не «сегодня» для обработки.`);
                 resetBotRuntimeState();
                 return;
             }
@@ -723,7 +929,6 @@ async function processNextCard(gen = runGeneration) {
         console.log(`[Бот Bitrix] [Заявка ${cardId}] 1. Открываем заявку: ${cardTitleText}`);
         clickLikeUser(cardTitleLink);
 
-        // Ждём до 10 сек, пока прогрузятся детали карточки в слайдере (кнопка «Чат», вкладка «Сообщение» или таймлайн)
         let cardReady = false;
         for (let i = 0; i < 40; i++) {
             ensureQueueActive(gen);
@@ -752,10 +957,8 @@ async function processNextCard(gen = runGeneration) {
         const chatOpened = await openBitrixChatForCard(cardId, false);
         ensureQueueActive(gen);
 
-        // Если кнопка чата неактивна/заблокирована
         if (!chatOpened) {
             if (isNewMode) {
-                // Даём вкладке «Сообщение» ещё до 5 сек на догрузку
                 let hasMsgTabNow = false;
                 for (let i = 0; i < 20; i++) {
                     ensureQueueActive(gen);
@@ -809,7 +1012,6 @@ async function processNextCard(gen = runGeneration) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате найдено исходящее СМС из Битрикс24 — отправим сценарий без 1-го приветственного сообщения.`);
             }
 
-            // Сначала 2 сек на пропуск по Esc; «Ответить» жмём только после этого
             const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 2000);
             if (waitRes.aborted) return;
             ensureQueueActive(gen);
@@ -840,6 +1042,43 @@ async function processNextCard(gen = runGeneration) {
 
             const moved = await moveCardToStage(targetStageForNew, gen);
             if (!moved) return;
+            ensureQueueActive(gen);
+
+            await addHandledCardId(cardId);
+            await returnToCRMAndEscape();
+            processNextCard(gen);
+            return;
+        }
+
+        if (isTouch2Mode) {
+            const answer2 = await askTouch2SendConfirmation(cardId, cardTitleText, gen);
+            if (answer2 === null) {
+                removeLeftConfirmModal();
+                return;
+            }
+            ensureQueueActive(gen);
+
+            if (answer2 === 'skip') {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] [2 касание] Выбрано «Нет» (Esc) — закрываем и идём дальше.`);
+                await addHandledCardId(cardId);
+                await closeChatAndCard();
+                processNextCard(gen);
+                return;
+            }
+
+            const inputReady2 = await clickReplyIfPresentInOpenChat(cardId, gen);
+            ensureQueueActive(gen);
+            if (!inputReady2) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
+
+            await sendSavedFlowInBitrixChat('touch2', gen);
+            await queueSleep(600, gen);
+
+            pressEscapeEverywhere();
+            await queueSleep(500, gen);
+
+            const stageAfterTouch2 = (answer2 === 'send_touch3') ? 'touch3' : 'close';
+            const moved2 = await moveCardToStage(stageAfterTouch2, gen);
+            if (!moved2) return;
             ensureQueueActive(gen);
 
             await addHandledCardId(cardId);
@@ -909,126 +1148,6 @@ async function processNextCard(gen = runGeneration) {
 
 function proceedToNextCardFromStorage() {
     processNextCard(runGeneration);
-}
-
-function extractCardDateRaw(card) {
-    const byLastActivityAgo = card.querySelector('.crm-kanban-item-last-activity-time-ago');
-    const byLastActivityBox = card.querySelector('.crm-kanban-item-last-activity-time');
-    const byConfig = (typeof SELECTORS !== 'undefined' && SELECTORS?.bitrix?.cardDate)
-        ? card.querySelector(SELECTORS.bitrix.cardDate)
-        : null;
-    const byItemDate = card.querySelector('.crm-kanban-item-date');
-
-    const el = byLastActivityAgo || byLastActivityBox || byConfig || byItemDate;
-    const selectorUsed = byLastActivityAgo
-        ? '.crm-kanban-item-last-activity-time-ago'
-        : (byLastActivityBox
-            ? '.crm-kanban-item-last-activity-time'
-            : (byConfig ? SELECTORS.bitrix.cardDate : (byItemDate ? '.crm-kanban-item-date' : 'none')));
-
-    const rawText = el ? (el.innerText || el.textContent || '') : '';
-    return {
-        elFound: Boolean(el),
-        selectorUsed,
-        rawText: rawText.trim(),
-        normText: rawText.trim().toLowerCase()
-    };
-}
-
-function isCardDateToday(card, cardId = '', debug = false) {
-    const info = extractCardDateRaw(card);
-    const t = info.normText;
-
-    // Если пусто — безопаснее считать сегодняшней, чтобы не дёрнуть лишнюю карточку
-    if (!t) {
-        if (debug) console.log(`[DBG Дата] card=${cardId} | пусто -> TODAY`);
-        return true;
-    }
-
-    // Явно «сегодня» (включая «Сегодня 17:36»)
-    if (t.includes('сегодня')) {
-        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY`);
-        return true;
-    }
-
-    // Только время «17:36» — это тоже за сегодня
-    if (/^\d{1,2}:\d{2}$/.test(t)) {
-        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (время)`);
-        return true;
-    }
-
-    // Относительное время в секундах/минутах/часах назад (например «15 минут назад», «2 часа назад»)
-    if (/назад/.test(t) && /(секунд|минут|час)/.test(t)) {
-        if (debug) console.log(`[DBG Дата] card=${cardId} | raw="${info.rawText}" -> TODAY (часы/минуты назад)`);
-        return true;
-    }
-
-    // Всё остальное («вчера», «12 Ноя», «15 Окт», даты и т.д.) — НЕ сегодня, можно брать
-    if (debug) console.log(`[DBG Дата] card=${cardId} | sel=${info.selectorUsed} | raw="${info.rawText}" -> NOT TODAY`);
-    return false;
-}
-
-async function scrollToFirstNonTodayCard(column, handledSet, gen) {
-    console.log(`[DBG Scroll] Старт поиска карточки «1 касания» не за сегодня. handledCount=${handledSet.size}`);
-
-    for (let step = 0; step < 80; step++) {
-        ensureQueueActive(gen);
-
-        const cards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-        const datesSummary = cards.slice(-8).map(c => {
-            const id = getCardId(c);
-            const d = extractCardDateRaw(c).rawText || '<empty>';
-            return `${id}[${d}]`;
-        });
-
-        console.log(`[DBG Scroll] Шаг ${step}: карточек в DOM=${cards.length} | последние 8: ${datesSummary.join(', ')}`);
-
-        const candidate = cards.find(c => {
-            const id = getCardId(c);
-            if (handledSet.has(id)) return false;
-            const today = isCardDateToday(c, id, true);
-            return !today;
-        });
-
-        if (candidate) {
-            const cid = getCardId(candidate);
-            const rawDate = extractCardDateRaw(candidate).rawText;
-            console.log(`[DBG Scroll] НАЙДЕНА подходящая карточка: id=${cid}, дата="${rawDate}" на шаге ${step}`);
-            candidate.scrollIntoView({ block: 'center' });
-            await queueSleep(350, gen);
-            return candidate;
-        }
-
-        const scrollers = getKanbanScrollers(column);
-        console.log(`[DBG Scroll] Шаг ${step}: подходящих нет. Найдено скроллеров=${scrollers.length}`);
-
-        for (let idx = 0; idx < scrollers.length; idx++) {
-            const sc = scrollers[idx];
-            const beforeTop = sc.scrollTop;
-            const beforeH = sc.scrollHeight;
-            sc.scrollTop = sc.scrollHeight;
-            sc.dispatchEvent(new Event('scroll', { bubbles: true }));
-            console.log(`[DBG Scroll]   scroller[${idx}] (${sc.className || sc.tagName}): top ${beforeTop} -> ${sc.scrollTop}, height ${beforeH} -> ${sc.scrollHeight}`);
-        }
-
-        if (cards.length) {
-            cards[cards.length - 1].scrollIntoView({ block: 'end' });
-        }
-
-        await queueSleep(900, gen);
-
-        const afterCardsCount = column.querySelectorAll(SELECTORS.bitrix.cards).length;
-        const afterHeights = scrollers.map(sc => sc.scrollHeight);
-        console.log(`[DBG Scroll] После ожидания шага ${step}: карточек=${afterCardsCount}, heights=[${afterHeights.join(', ')}]`);
-    }
-
-    console.warn(`[DBG Scroll] Достигнут лимит 80 шагов, финальная проверка DOM...`);
-    ensureQueueActive(gen);
-    const fallbackCards = Array.from(column.querySelectorAll(SELECTORS.bitrix.cards));
-    return fallbackCards.find(c => {
-        const id = getCardId(c);
-        return !handledSet.has(id) && !isCardDateToday(c, id, true);
-    }) || null;
 }
 
 function isScrollableEl(el) {

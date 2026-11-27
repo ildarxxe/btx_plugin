@@ -212,6 +212,7 @@
         <select id="modeSelect">
             <option value="new">Новая (отправить прайс → 1 касание)</option>
             <option value="touch1">1 касание (напомнить → 3 касание)</option>
+            <option value="touch2">2 касание (Enter → Закрыто · Ctrl+Esc → 3 касание)</option>
         </select>
     </div>
 
@@ -246,6 +247,11 @@
         <strong>1-му касанию</strong>
         <small>Текст, файлы, порядок и горячая клавиша</small>
     </button>
+
+    <button type="button" id="pickTouch2Btn" class="btn-choice">
+        <strong>2-му касанию</strong>
+        <small>Текст, файлы, порядок и горячая клавиша</small>
+    </button>
 </div>
 
 <!-- ЭКРАН 3: РЕДАКТОР СЦЕНАРИЯ -->
@@ -261,7 +267,7 @@
             <input type="text" id="hotkeyInput" readonly placeholder="Например: Ctrl+Alt+Enter">
             <button type="button" id="recordHotkeyBtn" class="btn-secondary btn-small">Записать</button>
         </div>
-        <div id="hotkeyHint" class="hint">Нажмите «Записать», затем нужную комбинацию (например, Ctrl+Alt+1 или Ctrl+Alt+Shift+Enter).</div>
+        <div id="hotkeyHint" class="hint">Нажмите «Записать», затем нужную комбинацию (например, Ctrl+Alt+2 или Ctrl+Alt+Shift+Enter).</div>
     </div>
 
     <div class="control-group">
