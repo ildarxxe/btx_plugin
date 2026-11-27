@@ -205,27 +205,17 @@
 <body>
 <!-- ЭКРАН 1: ГЛАВНАЯ -->
 <div id="view-home" class="view active">
-    <h3><span>Авто-рассылка Bitrix → WA</span></h3>
+    <h3><span>Авто-рассылка Bitrix</span></h3>
 
     <div class="control-group">
         <label for="modeSelect">Выберите колонку</label>
         <select id="modeSelect">
-            <option value="new">Новая (отправить прайс → 1 касание)</option>
-            <option value="touch1">1 касание (напомнить → 3 касание)</option>
-            <option value="touch2">2 касание (Enter → Закрыто · Ctrl+Esc → 3 касание)</option>
+            <option value="new">Новая</option>
+            <option value="touch1">1 касание</option>
+            <option value="touch2">2 касание</option>
         </select>
     </div>
 
-    <div class="control-group">
-        <div class="checkbox-row">
-            <input type="checkbox" id="testModeCheck">
-            <label for="testModeCheck" style="margin:0; font-weight:normal;">Тестовый режим (мой номер)</label>
-        </div>
-        <input type="text" id="testPhoneInput" value="87781193946" style="margin-top: 6px;" placeholder="Тестовый номер">
-    </div>
-
-    <button id="startBtn">▶ Запустить рассылку</button>
-    <button id="stopBtn">⏹ Остановить / Сбросить</button>
     <button id="openEditMenuBtn" class="btn-secondary">✎ Редактировать сообщения</button>
 
     <div id="statusText">Готов к работе</div>
@@ -239,7 +229,7 @@
     </h3>
 
     <button type="button" id="pickFirstTouchBtn" class="btn-choice">
-        <strong>Новым (первые сообщения)</strong>
+        <strong>Новым</strong>
         <small>Текст, файлы, порядок и горячая клавиша</small>
     </button>
 

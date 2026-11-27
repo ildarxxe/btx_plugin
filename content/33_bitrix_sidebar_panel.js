@@ -185,27 +185,6 @@
             }
         });
 
-        const popoutBtn = document.createElement('button');
-        popoutBtn.type = 'button';
-        popoutBtn.textContent = 'Окно';
-        popoutBtn.title = 'Открыть в отдельном окне';
-        popoutBtn.style.cssText = [
-            'padding:3px 7px',
-            'border:1px solid #4a5568',
-            'border-radius:4px',
-            'background:#2d3748',
-            'color:#fff',
-            'font-size:11px',
-            'cursor:pointer'
-        ].join(';');
-        popoutBtn.addEventListener('click', () => {
-            window.open(
-                PANEL_URL + '?t=' + Date.now(),
-                'ElkiBtxPanelWindow',
-                'width=380,height=640,resizable=yes,scrollbars=yes'
-            );
-        });
-
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.textContent = '✕';
