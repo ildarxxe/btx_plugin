@@ -459,8 +459,9 @@ function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 2000
             'font:13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
         ].join(';');
 
+        const secLabel = Math.max(1, Math.round(delayMs / 1000));
         box.innerHTML = `
-            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">Пауза перед отправкой (2 сек)</div>
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">Пауза перед отправкой (${secLabel} сек)</div>
             <div style="font-size:12px;color:#cbd5e1;margin-bottom:6px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
             <div style="font-size:11px;color:#fbbf24;">Нажмите <b>Esc</b>, чтобы пропустить заявку</div>
         `;
@@ -1012,7 +1013,7 @@ async function processNextCard(gen = runGeneration) {
                 console.log(`[Бот Bitrix] [Заявка ${cardId}] В чате найдено исходящее СМС из Битрикс24 — отправим сценарий без 1-го приветственного сообщения.`);
             }
 
-            const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 2000);
+            const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 4000);
             if (waitRes.aborted) return;
             ensureQueueActive(gen);
 
