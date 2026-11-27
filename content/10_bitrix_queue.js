@@ -33,7 +33,15 @@ function clearBusyFlags() {
 }
 
 function isRunActive(gen = runGeneration) {
-    return gen === runGeneration && isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
+    const genOk = gen === runGeneration;
+    const runningOk = Boolean(isScriptRunning);
+    const pausedOk = !BOT_CONFIG.isPaused;
+    const stale = (typeof isStaleInstance === 'function') ? Boolean(isStaleInstance()) : false;
+    const active = genOk && runningOk && pausedOk && !stale;
+    if (!active && genOk && runningOk) {
+        console.warn(`[DBG Queue] isRunActive=false | gen=${gen}/${runGeneration}, isScriptRunning=${runningOk}, isPaused=${BOT_CONFIG.isPaused}, isStaleInstance=${stale}`);
+    }
+    return active;
 }
 
 function ensureQueueActive(gen) {
@@ -199,7 +207,6 @@ setInterval(() => {
     } catch (e) {}
 }, 3000);
 
-// Проверяем, есть ли в чате реальные сообщения менеджера (игнорируем системные блоки Wazzup с замочком)
 function hasSelfMessagesInBitrixChat() {
     const selfMsgs = findAllInAnyDocument(
         '.bx-im-message-base__wrap.--self, .bx-im-message-list-author-group__container.--self'
@@ -218,7 +225,6 @@ function hasSelfMessagesInBitrixChat() {
     });
 }
 
-// Проверяем, есть ли в чате сообщение от собеседника с исходящим СМС из Битрикс24
 function hasOutgoingBitrixSmsInChat() {
     const opponentMsgs = findAllInAnyDocument(
         '.bx-im-message-base__wrap.--opponent, [data-testid="im-message-base-root"].--opponent'
@@ -230,7 +236,6 @@ function hasOutgoingBitrixSmsInChat() {
     });
 }
 
-// Ждём появления кнопки «Ответить» или активного поля ввода до 12 сек; после клика ждём активации поля ввода
 async function clickReplyIfPresentInOpenChat(cardId, gen) {
     ensureQueueActive(gen);
 
@@ -271,13 +276,11 @@ async function clickReplyIfPresentInOpenChat(cardId, gen) {
     return Boolean(getActiveTextarea());
 }
 
-// Проверяем в таймлайне карточки, есть ли уже запись «Отправлено СМС-сообщение»
 function hasSentSmsInDealTimeline() {
     const titles = findAllInAnyDocument('.crm-timeline__card-title, .crm-timeline__card-wrapper');
     return titles.some(el => /отправлено\s+смс-сообщение/i.test((el.innerText || el.textContent || '').trim()));
 }
 
-// Проверяем, есть ли в деталях сделки реальный номер телефона клиента
 function dealHasClientPhoneNumber() {
     const phoneEls = findAllInAnyDocument(
         `${SELECTORS.bitrix.phoneWidget}, a[href^="tel:"], [data-cid="PHONE"] .crm-entity-widget-content-block-inner`
@@ -305,7 +308,6 @@ function dealHasClientPhoneNumber() {
     return false;
 }
 
-// Однократная вставка текста через beforeinput (без запасных вставок и дублей)
 async function insertSingleTextIntoSmsEditor(editor, text, gen = runGeneration) {
     ensureQueueActive(gen);
     const clean = String(text || '').trim();
@@ -337,7 +339,6 @@ async function insertSingleTextIntoSmsEditor(editor, text, gen = runGeneration) 
     return false;
 }
 
-// Отправка 1-го приветственного сообщения через вкладку «Сообщение» в деталях сделки
 async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     ensureQueueActive(gen);
 
@@ -441,8 +442,6 @@ async function sendFirstGreetingViaDealSmsTab(cardId, gen) {
     return true;
 }
 
-// Пауза перед первым сообщением только в рассылке «Новые»:
-// если нажать Esc — возвращает { skipped: true }, иначе { skipped: false }
 function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 4000) {
     return new Promise((resolve) => {
         removeNewSkipBanner();
@@ -534,7 +533,6 @@ function waitBeforeFirstNewMessageWithEsc(cardId, titleText, gen, delayMs = 4000
     });
 }
 
-// После пропуска по Esc в «Новых»: 1-й Esc -> детали заявки, 2-й Esc -> общий список заявок
 async function exitChatToDetailsThenList(gen) {
     ensureQueueActive(gen);
     pressEscapeEverywhere();
@@ -543,10 +541,6 @@ async function exitChatToDetailsThenList(gen) {
     await queueSleep(600, gen);
 }
 
-// Подтверждение для 1-го касания:
-// true — отправить и перевести (Enter)
-// 'skip' — закрыть и пропустить (Esc)
-// 'close_deal' — не отправлять и закрыть сделку (Ctrl+Esc)
 function askTouch1SendConfirmation(cardId, titleText, gen) {
     return new Promise((resolve) => {
         removeLeftConfirmModal();
@@ -656,10 +650,6 @@ function askTouch1SendConfirmation(cardId, titleText, gen) {
     });
 }
 
-// Подтверждение для 2-го касания:
-// 'send_close' — отправить и перевести в «Закрыто» (Enter)
-// 'skip' — закрыть и пропустить (Esc)
-// 'send_touch3' — отправить и перевести в «3 касание» (Ctrl+Esc)
 function askTouch2SendConfirmation(cardId, titleText, gen) {
     return new Promise((resolve) => {
         removeLeftConfirmModal();
@@ -860,6 +850,7 @@ async function sendSavedFlowInBitrixChat(flowKey, gen, options = {}) {
         throw new Error("Не найдена функция runBitrixFlow (проверьте загрузку 32_bitrix_custom_flow.js).");
     }
     const res = await runner(flowKey, gen, options);
+    console.log(`[DBG Queue] sendSavedFlowInBitrixChat(${flowKey}) вернул:`, res);
     ensureQueueActive(gen);
     if (res !== true) {
         throw new Error("Сценарий не вернул true — остановка до смены стадии.");
@@ -871,10 +862,14 @@ async function processNextCard(gen = runGeneration) {
     removeNewSkipBanner();
 
     if (isStaleInstance()) {
+        console.warn('[DBG Queue] processNextCard прерван: isStaleInstance() === true');
         resetBotRuntimeState();
         return;
     }
-    if (!isRunActive(gen)) return;
+    if (!isRunActive(gen)) {
+        console.warn(`[DBG Queue] processNextCard прерван: isRunActive(${gen}) === false`);
+        return;
+    }
 
     try {
         ensureQueueActive(gen);
@@ -1026,7 +1021,10 @@ async function processNextCard(gen = runGeneration) {
 
             console.log(`[Бот Bitrix] [Заявка ${cardId}] 3. Пауза 4 сек перед отправкой (Esc для пропуска)...`);
             const waitRes = await waitBeforeFirstNewMessageWithEsc(cardId, cardTitleText, gen, 4000);
-            if (waitRes.aborted) return;
+            if (waitRes.aborted) {
+                console.warn(`[Бот Bitrix] [Заявка ${cardId}] Пауза прервана (aborted=true).`);
+                return;
+            }
             ensureQueueActive(gen);
 
             if (waitRes.skipped) {
@@ -1039,6 +1037,7 @@ async function processNextCard(gen = runGeneration) {
 
             console.log(`[Бот Bitrix] [Заявка ${cardId}] 4. Проверяем кнопку «Ответить» / поле ввода...`);
             const inputReady = await clickReplyIfPresentInOpenChat(cardId, gen);
+            console.log(`[Бот Bitrix] [Заявка ${cardId}] Результат проверки поля ввода: inputReady=${inputReady}`);
             ensureQueueActive(gen);
             if (!inputReady) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
 
@@ -1153,6 +1152,7 @@ async function processNextCard(gen = runGeneration) {
     } catch (e) {
         clearBusyFlags();
         if (e && e.message === 'BOT_ABORTED') {
+            console.warn(`[DBG Queue] [Заявка ${currentCardId || '?'}] Выход по BOT_ABORTED.`);
             return;
         }
         if (!isRunActive(gen)) return;

@@ -51,6 +51,7 @@ async function sendBitrixChatText(text) {
 
     const B = BITRIX_CHAT_SELECTORS;
     const inputEl = findAnyBitrixChatInput();
+    console.log('[DBG Sender] sendBitrixChatText | inputFound:', Boolean(inputEl), '| len:', cleanText.length);
     if (!inputEl) {
         throw new Error("Не найдено поле ввода в открытом чате Bitrix.");
     }
@@ -58,11 +59,13 @@ async function sendBitrixChatText(text) {
     setTextareaValueLikeUser(inputEl, cleanText);
     await sleep(350);
 
-    const sendBtn = findAllInAnyDocument(B.sendBtn).find(isVisible) || findInAnyDocument(B.sendBtn);
+    const sendBtn = findAllInAnyDocument(B.sendBtn).find(isVisible) || null;
     const isBtnEnabled = sendBtn &&
         !sendBtn.disabled &&
         sendBtn.getAttribute('aria-disabled') !== 'true' &&
         !sendBtn.classList.contains('--disabled');
+
+    console.log('[DBG Sender] sendBtn found:', Boolean(sendBtn), '| enabled:', Boolean(isBtnEnabled));
 
     if (sendBtn && isBtnEnabled) {
         clickLikeUser(sendBtn);
@@ -111,12 +114,14 @@ function base64ToFile(dataUrlOrBase64, fileName, mimeType) {
 }
 
 async function fetchDefaultPriceFile() {
+    console.log('[DBG Sender] Скачиваем дефолтный файл:', PRICE_FILE_PATH);
     const resp = await fetch(PRICE_FILE_PATH + '?t=' + Date.now(), { cache: 'no-store' });
     if (!resp.ok) {
         throw new Error(`Не удалось скачать дефолтный файл (${resp.status})`);
     }
     const blob = await resp.blob();
     const randomName = PRICE_FILE_NAMES[Math.floor(Math.random() * PRICE_FILE_NAMES.length)] || 'price.pdf';
+    console.log('[DBG Sender] Дефолтный файл получен:', randomName, 'size:', blob.size);
     return new File([blob], randomName, { type: blob.type || 'application/pdf', lastModified: Date.now() });
 }
 
@@ -178,12 +183,15 @@ async function attachFilesToBitrixChat(filesOrDataTransfer) {
     fileList.forEach(f => dt.items.add(f));
 
     let inputs = findBitrixFileInputs();
+    console.log('[DBG Sender] attachFilesToBitrixChat | inputsFound:', inputs.length, '| files:', fileList.map(f => f.name));
     if (!inputs.length) {
-        const attachBtn = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn).find(isVisible) || findInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn);
+        const attachBtn = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.attachBtn).find(isVisible) || null;
+        console.log('[DBG Sender] attachBtn found:', Boolean(attachBtn));
         if (attachBtn) {
             clickLikeUser(attachBtn);
             await sleep(600);
             inputs = findBitrixFileInputs();
+            console.log('[DBG Sender] inputsFound после клика attachBtn:', inputs.length);
         }
     }
 
@@ -211,9 +219,11 @@ async function waitAndClickAttachmentSend(captionText = '') {
     const findPreviewBtn = () => findAllInAnyDocument(B.previewSendBtn).find(isVisible) || null;
 
     const deadline = Date.now() + BITRIX_FILE_UPLOAD_WAIT_MS;
+    console.log('[DBG Sender] waitAndClickAttachmentSend запущен, ждём до', BITRIX_FILE_UPLOAD_WAIT_MS, 'мс');
     while (Date.now() < deadline) {
         const previewBtn = findPreviewBtn();
         if (previewBtn && isEnabled(previewBtn)) {
+            console.log('[DBG Sender] previewSendBtn активен, нажимаем...');
             await sleep(600);
 
             if (captionText) {
@@ -238,6 +248,7 @@ async function waitAndClickAttachmentSend(captionText = '') {
                     await sleep(500);
                     if (!findPreviewBtn()) {
                         await sleep(800);
+                        console.log('[DBG Sender] Вложение отправлено (окно предпросмотра закрылось).');
                         return;
                     }
                 }
@@ -253,6 +264,7 @@ async function waitAndClickAttachmentSend(captionText = '') {
             isVisible(b) && isEnabled(b) && /^(отправить|send)$/i.test((b.innerText || '').trim()) && !b.matches(B.sendBtn)
         );
         if (popupBtn) {
+            console.log('[DBG Sender] popupBtn найден, нажимаем...');
             clickLikeUser(popupBtn);
             await sleep(1500);
             return;
@@ -261,6 +273,7 @@ async function waitAndClickAttachmentSend(captionText = '') {
         if (!previewBtn) {
             const mainBtn = findAllInAnyDocument(B.sendBtn).find(isEnabled);
             if (mainBtn) {
+                console.log('[DBG Sender] mainBtn активен без превью, нажимаем...');
                 clickLikeUser(mainBtn);
                 await sleep(1500);
                 return;

@@ -109,37 +109,55 @@ function buildFilePayloadFromStep(step) {
 
 function ensureBitrixChatReadyForFlow() {
     if (customFlowBusy || bitrixChatSending) {
-        showBotToast("Отправка уже идёт, подождите…");
+        console.warn('[DBG Flow] ensureBitrixChatReadyForFlow: занято (customFlowBusy=%s, bitrixChatSending=%s)', customFlowBusy, bitrixChatSending);
+        if (typeof showBotToast === 'function') showBotToast("Отправка уже идёт, подождите…");
         return false;
     }
-    const ta = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.textarea).find(isVisible) || findInAnyDocument(BITRIX_CHAT_SELECTORS.textarea);
+    const ta = findAllInAnyDocument(BITRIX_CHAT_SELECTORS.textarea).find(isVisible) || null;
     if (!ta) {
-        showBotToast("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».", true);
+        console.warn('[DBG Flow] ensureBitrixChatReadyForFlow: видимое поле ввода чата не найдено');
+        if (typeof showBotToast === 'function') showBotToast("Не вижу поля ввода в чате Bitrix. Откройте диалог и нажмите «Ответить».", true);
         return false;
     }
     if (ta.disabled) {
-        showBotToast("Поле ввода заблокировано. Нажмите «Ответить» в диалоге.", true);
+        console.warn('[DBG Flow] ensureBitrixChatReadyForFlow: поле ввода disabled');
+        if (typeof showBotToast === 'function') showBotToast("Поле ввода заблокировано. Нажмите «Ответить» в диалоге.", true);
         return false;
     }
     if ((ta.value || '').trim()) {
-        showBotToast("В поле ввода уже есть текст — очистите его и повторите.", true);
+        console.warn('[DBG Flow] ensureBitrixChatReadyForFlow: в поле ввода уже есть текст');
+        if (typeof showBotToast === 'function') showBotToast("В поле ввода уже есть текст — очистите его и повторите.", true);
         return false;
     }
     return true;
 }
 
+async function flowPauseBetweenSteps(msRange) {
+    if (typeof humanPause === 'function') {
+        await humanPause(msRange);
+        return;
+    }
+    const [minMs, maxMs] = Array.isArray(msRange) ? msRange : [1500, 3500];
+    const delay = minMs + Math.floor(Math.random() * Math.max(100, maxMs - minMs + 1));
+    await sleep(delay);
+}
+
 async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
     const isAutoRun = expectedGen !== null;
+    console.log(`[DBG Flow] runBitrixFlow старт: flowKey=${flowKey}, isAutoRun=${isAutoRun}, expectedGen=${expectedGen}, options=`, options);
+
     const stillAllowed = () => {
-        if (!isAutoRun) return !isStaleInstance();
+        if (!isAutoRun) return (typeof isStaleInstance === 'function') ? !isStaleInstance() : true;
         if (typeof isRunActive === 'function') {
             return isRunActive(expectedGen);
         }
-        return isScriptRunning && !BOT_CONFIG.isPaused && !isStaleInstance();
+        const stale = (typeof isStaleInstance === 'function') ? Boolean(isStaleInstance()) : false;
+        return Boolean(isScriptRunning) && !BOT_CONFIG.isPaused && !stale;
     };
 
     const assertFlowAllowed = () => {
         if (!stillAllowed()) {
+            console.warn(`[DBG Flow] assertFlowAllowed сработал запрет для flowKey=${flowKey}, isAutoRun=${isAutoRun}`);
             throw new Error(isAutoRun ? 'BOT_ABORTED' : 'FLOW_STOPPED');
         }
     };
@@ -152,16 +170,19 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
 
     const flow = customFlowState.flows[flowKey];
     let items = (flow && Array.isArray(flow.items)) ? flow.items.slice() : [];
+    console.log(`[DBG Flow] Загружено элементов сценария ${flowKey}:`, items.length);
 
     if (options && options.skipFirstText) {
         const firstTextIdx = items.findIndex(it => it && it.type === 'text' && String(it.text || '').trim());
         if (firstTextIdx >= 0) {
             items.splice(firstTextIdx, 1);
+            console.log('[DBG Flow] Пропущен первый текстовый шаг (skipFirstText=true). Осталось шагов:', items.length);
         }
     }
 
     if (!items.length) {
-        showBotToast("В выбранном сценарии нет элементов для отправки.", true);
+        console.warn('[DBG Flow] В выбранном сценарии нет элементов для отправки.');
+        if (typeof showBotToast === 'function') showBotToast("В выбранном сценарии нет элементов для отправки.", true);
         return false;
     }
 
@@ -174,6 +195,7 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
             assertFlowAllowed();
             const item = items[i];
             if (item && item.type === 'file') {
+                console.log(`[DBG Flow] Подготовка файла на шаге ${i + 1}:`, item.fileName || '__DEFAULT_PRICE__');
                 preparedFiles[i] = await loadPriceFileDataTransfer(buildFilePayloadFromStep(item));
             }
         }
@@ -184,28 +206,41 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
             if (!item || !item.type) continue;
 
             if (i > 0) {
-                await humanPause(BITRIX_CHAT_DELAYS.betweenMessages);
+                console.log(`[DBG Flow] Пауза между шагами перед шагом ${i + 1}/${items.length}...`);
+                await flowPauseBetweenSteps(BITRIX_CHAT_DELAYS.betweenMessages);
                 assertFlowAllowed();
             }
 
             if (item.type === 'text') {
                 const txt = (item.text || '').trim();
-                if (!txt) continue;
-                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю текст…`);
+                if (!txt) {
+                    console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: пустой текст — пропуск.`);
+                    continue;
+                }
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: отправляю текст...`);
+                if (typeof showBotToast === 'function') showBotToast(`Шаг ${i + 1}/${items.length}: отправляю текст…`);
                 await sendBitrixChatText(txt);
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: текст отправлен.`);
             } else if (item.type === 'file') {
                 const labelName = item.fileName || 'price.pdf';
-                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю файл ${labelName}…`);
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: отправляю файл ${labelName}...`);
+                if (typeof showBotToast === 'function') showBotToast(`Шаг ${i + 1}/${items.length}: отправляю файл ${labelName}…`);
                 await sendBitrixChatFile(preparedFiles[i]);
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: файл отправлен.`);
             } else if (item.type === 'images_with_text') {
                 const imgs = Array.isArray(item.images) ? item.images : [];
-                showBotToast(`Шаг ${i + 1}/${items.length}: отправляю фото (${imgs.length} шт.) с текстом…`);
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: отправляю фото (${imgs.length} шт.)...`);
+                if (typeof showBotToast === 'function') showBotToast(`Шаг ${i + 1}/${items.length}: отправляю фото (${imgs.length} шт.) с текстом…`);
                 await sendBitrixChatImagesWithText(imgs, item.text || '');
+                console.log(`[DBG Flow] Шаг ${i + 1}/${items.length}: фото отправлены.`);
             }
         }
 
         assertFlowAllowed();
-        showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
+        console.log(`[DBG Flow] Сценарий ${flowKey} успешно завершён.`);
+        if (typeof showBotToast === 'function') {
+            showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
+        }
         return true;
     } catch (e) {
         if (e && (e.message === 'BOT_ABORTED' || e.message === 'FLOW_STOPPED')) {
