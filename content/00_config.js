@@ -27,7 +27,7 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
     };
 }
 
-console.warn('[BOT BUILD CHECK] 7.1', window.location.href);
+console.warn('[BOT BUILD CHECK] 7.2', window.location.href);
 
 const PRICE_FILE_PATH = 'https://ildarxxe.github.io/btx_plugin/price.pdf';
 

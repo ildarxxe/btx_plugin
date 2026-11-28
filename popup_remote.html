@@ -213,6 +213,16 @@
             <option value="new">Новая</option>
             <option value="touch1">1 касание</option>
             <option value="touch2">2 касание</option>
+            <option value="touch3">3 касание</option>
+        </select>
+    </div>
+
+    <div class="control-group">
+        <label for="touch1TargetSelect">Статус после первого касания</label>
+        <select id="touch1TargetSelect">
+            <option value="touch2">2 касание</option>
+            <option value="touch3">3 касание</option>
+            <option value="close">Закрыть</option>
         </select>
     </div>
 
@@ -240,6 +250,11 @@
 
     <button type="button" id="pickTouch2Btn" class="btn-choice">
         <strong>2-му касанию</strong>
+        <small>Текст, файлы, порядок и горячая клавиша</small>
+    </button>
+
+    <button type="button" id="pickTouch3Btn" class="btn-choice">
+        <strong>3-му касанию</strong>
         <small>Текст, файлы, порядок и горячая клавиша</small>
     </button>
 </div>

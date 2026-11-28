@@ -15,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const DEFAULT_HOTKEYS = {
         firstTouch: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Enter', label: 'Ctrl+Alt+Enter' },
         touch1: { ctrlKey: true, altKey: true, shiftKey: true, code: 'Enter', label: 'Ctrl+Alt+Shift+Enter' },
-        touch2: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }
+        touch2: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' },
+        touch3: { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit3', label: 'Ctrl+Alt+3' }
     };
 
     const DEFAULT_ITEMS = {
@@ -29,19 +30,24 @@ document.addEventListener('DOMContentLoaded', () => {
         ],
         touch2: [
             { id: 't2_1', type: 'text', text: 'Здравствуйте! Напоминаю о себе — остались ли вопросы по прайсу и моделям ёлочек? 🎄' }
+        ],
+        touch3: [
+            { id: 't3_1', type: 'text', text: 'Здравствуйте! Подскажите, пожалуйста, актуальна ли ещё покупка ёлочки в этом сезоне или можем закрывать заявку? 🎄' }
         ]
     };
 
     const EDITOR_TITLES = {
         firstTouch: 'Новым: сценарий',
         touch1: '1-му касанию: сценарий',
-        touch2: '2-му касанию: сценарий'
+        touch2: '2-му касанию: сценарий',
+        touch3: '3-му касанию: сценарий'
     };
 
     const MODE_LABELS = {
         new: 'Новая',
         touch1: '1 касание',
-        touch2: '2 касание'
+        touch2: '2 касание',
+        touch3: '3 касание'
     };
 
     const views = {
@@ -51,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const modeSelect = document.getElementById('modeSelect');
+    const touch1TargetSelect = document.getElementById('touch1TargetSelect');
     const testModeCheck = document.getElementById('testModeCheck');
     const testPhoneInput = document.getElementById('testPhoneInput');
     const startBtn = document.getElementById('startBtn');
@@ -62,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pickFirstTouchBtn = document.getElementById('pickFirstTouchBtn');
     const pickTouch1Btn = document.getElementById('pickTouch1Btn');
     const pickTouch2Btn = document.getElementById('pickTouch2Btn');
+    const pickTouch3Btn = document.getElementById('pickTouch3Btn');
     const backToChooseBtn = document.getElementById('backToChooseBtn');
 
     const editorTitle = document.getElementById('editorTitle');
@@ -87,12 +95,14 @@ document.addEventListener('DOMContentLoaded', () => {
         hotkeys: {
             firstTouch: { ...DEFAULT_HOTKEYS.firstTouch },
             touch1: { ...DEFAULT_HOTKEYS.touch1 },
-            touch2: { ...DEFAULT_HOTKEYS.touch2 }
+            touch2: { ...DEFAULT_HOTKEYS.touch2 },
+            touch3: { ...DEFAULT_HOTKEYS.touch3 }
         },
         flows: {
             firstTouch: { items: DEFAULT_ITEMS.firstTouch.map(x => ({ ...x })) },
             touch1: { items: DEFAULT_ITEMS.touch1.map(x => ({ ...x })) },
-            touch2: { items: DEFAULT_ITEMS.touch2.map(x => ({ ...x })) }
+            touch2: { items: DEFAULT_ITEMS.touch2.map(x => ({ ...x })) },
+            touch3: { items: DEFAULT_ITEMS.touch3.map(x => ({ ...x })) }
         }
     };
 
@@ -144,7 +154,8 @@ document.addEventListener('DOMContentLoaded', () => {
             hotkeys: {
                 firstTouch: { ...DEFAULT_HOTKEYS.firstTouch, ...(incoming.hotkeys && incoming.hotkeys.firstTouch) },
                 touch1: { ...DEFAULT_HOTKEYS.touch1, ...(incoming.hotkeys && incoming.hotkeys.touch1) },
-                touch2: { ...DEFAULT_HOTKEYS.touch2, ...(incoming.hotkeys && incoming.hotkeys.touch2) }
+                touch2: { ...DEFAULT_HOTKEYS.touch2, ...(incoming.hotkeys && incoming.hotkeys.touch2) },
+                touch3: { ...DEFAULT_HOTKEYS.touch3, ...(incoming.hotkeys && incoming.hotkeys.touch3) }
             },
             flows: {
                 firstTouch: {
@@ -161,6 +172,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     items: Array.isArray(incoming.flows && incoming.flows.touch2 && incoming.flows.touch2.items)
                         ? incoming.flows.touch2.items.map(x => ({ ...x }))
                         : DEFAULT_ITEMS.touch2.map(x => ({ ...x }))
+                },
+                touch3: {
+                    items: Array.isArray(incoming.flows && incoming.flows.touch3 && incoming.flows.touch3.items)
+                        ? incoming.flows.touch3.items.map(x => ({ ...x }))
+                        : DEFAULT_ITEMS.touch3.map(x => ({ ...x }))
                 }
             }
         };
@@ -169,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyLoadedState(state) {
         if (!state || typeof state !== 'object') return;
         if (state.runMode && modeSelect) modeSelect.value = state.runMode;
+        if (state.touch1TargetStage && touch1TargetSelect) touch1TargetSelect.value = state.touch1TargetStage;
         if (typeof state.useTestPhone === 'boolean' && testModeCheck) testModeCheck.checked = state.useTestPhone;
         if (state.testPhone && testPhoneInput) testPhoneInput.value = state.testPhone;
         if (state.customFlow) {
@@ -373,6 +390,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pickFirstTouchBtn) pickFirstTouchBtn.addEventListener('click', () => openEditor('firstTouch'));
     if (pickTouch1Btn) pickTouch1Btn.addEventListener('click', () => openEditor('touch1'));
     if (pickTouch2Btn) pickTouch2Btn.addEventListener('click', () => openEditor('touch2'));
+    if (pickTouch3Btn) pickTouch3Btn.addEventListener('click', () => openEditor('touch3'));
     if (backToChooseBtn) backToChooseBtn.addEventListener('click', () => showView('choose'));
 
     if (recordHotkeyBtn) {
@@ -380,7 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
             isRecordingHotkey = !isRecordingHotkey;
             recordHotkeyBtn.textContent = isRecordingHotkey ? 'Нажмите...' : 'Записать';
             hotkeyHint.textContent = isRecordingHotkey
-                ? 'Нажмите комбинацию клавиш (например, Ctrl+Alt+2)...'
+                ? 'Нажмите комбинацию клавиш (например, Ctrl+Alt+3)...'
                 : 'Нажмите «Записать», затем нужную комбинацию.';
         });
     }
@@ -539,6 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function persistRunConfig(extra = {}) {
         const config = {
             runMode: modeSelect ? modeSelect.value : 'new',
+            touch1TargetStage: touch1TargetSelect ? touch1TargetSelect.value : 'touch3',
             useTestPhone: testModeCheck ? Boolean(testModeCheck.checked) : false,
             testPhone: testPhoneInput ? testPhoneInput.value.trim() : '87781193946',
             ...extra
@@ -555,6 +574,17 @@ document.addEventListener('DOMContentLoaded', () => {
             persistRunConfig();
             if (statusText) {
                 statusText.textContent = `Выбрана колонка: ${MODE_LABELS[modeSelect.value] || modeSelect.value}`;
+                statusText.style.color = '#1ebe5d';
+            }
+        });
+    }
+
+    if (touch1TargetSelect) {
+        touch1TargetSelect.addEventListener('change', () => {
+            persistRunConfig();
+            if (statusText) {
+                const labels = { touch2: '2 касание', touch3: '3 касание', close: 'Закрыть' };
+                statusText.textContent = `После 1 касания → ${labels[touch1TargetSelect.value] || touch1TargetSelect.value}`;
                 statusText.style.color = '#1ebe5d';
             }
         });
