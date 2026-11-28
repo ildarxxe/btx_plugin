@@ -1,13 +1,14 @@
 // =====================================================================================
 // МОДУЛЬ 32_bitrix_custom_flow.js
-// BITRIX-ЧАТ: НАСТРАИВАЕМЫЕ СЦЕНАРИИ (1-е сообщения / 1-е касание), ФАЙЛЫ, АЛЬБОМЫ ФОТО И ГОРЯЧИЕ КЛАВИШИ
+// BITRIX-ЧАТ: НАСТРАИВАЕМЫЕ СЦЕНАРИИ (1-е сообщения / 1-е / 2-е / 3-е касание), ФАЙЛЫ, АЛЬБОМЫ ФОТО И ГОРЯЧИЕ КЛАВИШИ
 // =====================================================================================
 
 let customFlowState = {
     hotkeys: {
         firstTouch: { ...DEFAULT_HOTKEYS.firstTouch },
         touch1: { ...DEFAULT_HOTKEYS.touch1 },
-        touch2: { ...(DEFAULT_HOTKEYS.touch2 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }) }
+        touch2: { ...(DEFAULT_HOTKEYS.touch2 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }) },
+        touch3: { ...(DEFAULT_HOTKEYS.touch3 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit3', label: 'Ctrl+Alt+3' }) }
     },
     flows: {
         firstTouch: { items: DEFAULT_CUSTOM_FLOWS.firstTouch.items.map(x => ({ ...x })) },
@@ -16,6 +17,11 @@ let customFlowState = {
             items: (DEFAULT_CUSTOM_FLOWS.touch2 && Array.isArray(DEFAULT_CUSTOM_FLOWS.touch2.items))
                 ? DEFAULT_CUSTOM_FLOWS.touch2.items.map(x => ({ ...x }))
                 : [{ id: 't2_1', type: 'text', text: '' }]
+        },
+        touch3: {
+            items: (DEFAULT_CUSTOM_FLOWS.touch3 && Array.isArray(DEFAULT_CUSTOM_FLOWS.touch3.items))
+                ? DEFAULT_CUSTOM_FLOWS.touch3.items.map(x => ({ ...x }))
+                : [{ id: 't3_1', type: 'text', text: '' }]
         }
     }
 };
@@ -54,6 +60,10 @@ function applySavedFlowObject(saved) {
             touch2: {
                 ...(DEFAULT_HOTKEYS.touch2 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit2', label: 'Ctrl+Alt+2' }),
                 ...(saved.hotkeys && saved.hotkeys.touch2)
+            },
+            touch3: {
+                ...(DEFAULT_HOTKEYS.touch3 || { ctrlKey: true, altKey: true, shiftKey: false, code: 'Digit3', label: 'Ctrl+Alt+3' }),
+                ...(saved.hotkeys && saved.hotkeys.touch3)
             }
         },
         flows: {
@@ -71,6 +81,11 @@ function applySavedFlowObject(saved) {
                 items: Array.isArray(saved.flows && saved.flows.touch2 && saved.flows.touch2.items)
                     ? saved.flows.touch2.items.map(x => ({ ...x }))
                     : (DEFAULT_CUSTOM_FLOWS.touch2 ? DEFAULT_CUSTOM_FLOWS.touch2.items.map(x => ({ ...x })) : [])
+            },
+            touch3: {
+                items: Array.isArray(saved.flows && saved.flows.touch3 && saved.flows.touch3.items)
+                    ? saved.flows.touch3.items.map(x => ({ ...x }))
+                    : (DEFAULT_CUSTOM_FLOWS.touch3 ? DEFAULT_CUSTOM_FLOWS.touch3.items.map(x => ({ ...x })) : [{ id: 't3_1', type: 'text', text: '' }])
             }
         }
     };
@@ -140,6 +155,13 @@ async function flowPauseBetweenSteps(msRange) {
     const [minMs, maxMs] = Array.isArray(msRange) ? msRange : [1500, 3500];
     const delay = minMs + Math.floor(Math.random() * Math.max(100, maxMs - minMs + 1));
     await sleep(delay);
+}
+
+function getFlowDisplayTitle(flowKey) {
+    if (flowKey === 'touch1') return '1-е касание';
+    if (flowKey === 'touch2') return '2-е касание';
+    if (flowKey === 'touch3') return '3-е касание';
+    return '1-е сообщения';
 }
 
 async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
@@ -239,7 +261,7 @@ async function runBitrixFlow(flowKey, expectedGen = null, options = {}) {
         assertFlowAllowed();
         console.log(`[DBG Flow] Сценарий ${flowKey} успешно завершён.`);
         if (typeof showBotToast === 'function') {
-            showBotToast(`Готово: сценарий (${flowKey === 'touch1' ? '1-е касание' : '1-е сообщения'}) отправлен ✅`);
+            showBotToast(`Готово: сценарий (${getFlowDisplayTitle(flowKey)}) отправлен ✅`);
         }
         return true;
     } catch (e) {
@@ -274,6 +296,7 @@ function onCustomBitrixHotkey(e) {
     const hkFirst = customFlowState.hotkeys.firstTouch;
     const hkTouch1 = customFlowState.hotkeys.touch1;
     const hkTouch2 = customFlowState.hotkeys.touch2;
+    const hkTouch3 = customFlowState.hotkeys.touch3;
 
     if (matchesHotkey(e, hkTouch1)) {
         e.preventDefault();
@@ -288,6 +311,14 @@ function onCustomBitrixHotkey(e) {
         e.stopImmediatePropagation();
         if (e.repeat) return;
         runBitrixFlow('touch2');
+        return;
+    }
+
+    if (matchesHotkey(e, hkTouch3)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        runBitrixFlow('touch3');
         return;
     }
 

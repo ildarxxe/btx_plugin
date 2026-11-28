@@ -129,15 +129,20 @@ function resetBotRuntimeState() {
     removeNewSkipBanner();
 }
 
+function getRunModeLabel(mode) {
+    if (mode === 'new') return 'Новые';
+    if (mode === 'touch2') return '2 касание';
+    if (mode === 'touch3') return '3 касание';
+    return '1 касание';
+}
+
 function startAutomation() {
     resetBotRuntimeState();
     runGeneration += 1;
     const gen = runGeneration;
     isScriptRunning = true;
     BOT_CONFIG.isPaused = false;
-    const modeTitle = BOT_CONFIG.runMode === 'new'
-        ? 'Новые'
-        : (BOT_CONFIG.runMode === 'touch2' ? '2 касание' : '1 касание');
+    const modeTitle = getRunModeLabel(BOT_CONFIG.runMode);
     console.log(`[Бот Bitrix] Старт рассылки. Режим: ${BOT_CONFIG.runMode}`);
     if (typeof showBotToast === 'function') {
         showBotToast(`Рассылка запущена (${modeTitle}) ▶`);
@@ -755,6 +760,111 @@ function askTouch2SendConfirmation(cardId, titleText, gen) {
     });
 }
 
+function askTouch3SendConfirmation(cardId, titleText, gen) {
+    return new Promise((resolve) => {
+        removeLeftConfirmModal();
+
+        if (!isRunActive(gen)) {
+            resolve(null);
+            return;
+        }
+
+        const box = document.createElement('div');
+        box.id = LEFT_CONFIRM_MODAL_ID;
+        box.style.cssText = [
+            'position:fixed',
+            'left:20px',
+            'top:25%',
+            'width:325px',
+            'z-index:2147483647',
+            'background:#1c2129',
+            'color:#fff',
+            'border:1px solid #384152',
+            'border-radius:10px',
+            'padding:14px',
+            'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+            'font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif'
+        ].join(';');
+
+        box.innerHTML = `
+            <div style="font-weight:700;font-size:14px;margin-bottom:6px;">3 касание — делать рассылку?</div>
+            <div style="font-size:12px;color:#cbd5e1;margin-bottom:8px;word-break:break-word;">${(titleText || cardId || '').replace(/</g, '&lt;')}</div>
+            <div style="font-size:11px;color:#93c5fd;margin-bottom:10px;">Enter → <b>Отправить и закрыть</b> · Ctrl+Esc → <b>Закрыть без отправки</b></div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button id="elki-t3-send-close" type="button" style="flex:1;padding:8px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;cursor:pointer;">Отправить и закрыть (Enter)</button>
+                <button id="elki-t3-skip" type="button" style="padding:8px 10px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Пропустить (Esc)</button>
+            </div>
+            <button id="elki-t3-close-only" type="button" style="width:100%;padding:7px 8px;margin-bottom:8px;border:1px solid #7f1d1d;border-radius:6px;background:#450a0a;color:#fecaca;font-weight:700;font-size:12px;cursor:pointer;">Не отправлять и закрыть (Ctrl+Esc)</button>
+            <div style="font-size:11px;color:#94a3b8;">Enter — отправить и закрыть · Esc — пропустить · Ctrl+Esc — закрыть без отправки</div>
+        `;
+
+        (document.body || document.documentElement).appendChild(box);
+
+        let settled = false;
+        let pollId = null;
+
+        const cleanupDocs = () => {
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            try {
+                if (typeof getAllDocuments === 'function') {
+                    getAllDocuments().forEach(d => d.removeEventListener('keydown', onKeyDown, true));
+                }
+            } catch (e) {}
+        };
+
+        const finish = (answer) => {
+            if (settled) return;
+            settled = true;
+            clearInterval(pollId);
+            cleanupDocs();
+            removeLeftConfirmModal();
+            resolve(answer);
+        };
+
+        const onKeyDown = (e) => {
+            if (!isRunActive(gen)) {
+                finish(null);
+                return;
+            }
+            if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                finish('send_close');
+            } else if (e.key === 'Escape' || e.code === 'Escape') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+                    finish('close_deal');
+                } else {
+                    finish('skip');
+                }
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        try {
+            if (typeof getAllDocuments === 'function') {
+                getAllDocuments().forEach(d => d.addEventListener('keydown', onKeyDown, true));
+            }
+        } catch (e) {}
+
+        pollId = setInterval(() => {
+            if (!isRunActive(gen)) {
+                finish(null);
+            }
+        }, 150);
+
+        const sendCloseBtn = box.querySelector('#elki-t3-send-close');
+        const skipBtn = box.querySelector('#elki-t3-skip');
+        const closeOnlyBtn = box.querySelector('#elki-t3-close-only');
+        if (sendCloseBtn) sendCloseBtn.addEventListener('click', () => finish('send_close'));
+        if (skipBtn) skipBtn.addEventListener('click', () => finish('skip'));
+        if (closeOnlyBtn) closeOnlyBtn.addEventListener('click', () => finish('close_deal'));
+    });
+}
+
 function extractCardDateRaw(card) {
     const byLastActivityAgo = card.querySelector('.crm-kanban-item-last-activity-time-ago');
     const byLastActivityBox = card.querySelector('.crm-kanban-item-last-activity-time');
@@ -876,12 +986,15 @@ async function processNextCard(gen = runGeneration) {
 
         const isNewMode = BOT_CONFIG.runMode === 'new';
         const isTouch2Mode = BOT_CONFIG.runMode === 'touch2';
+        const isTouch3Mode = BOT_CONFIG.runMode === 'touch3';
 
         const columnSelector = isNewMode
             ? SELECTORS.bitrix.newColumn
             : (isTouch2Mode
                 ? (SELECTORS.bitrix.touch2Column || '[data-testid="kanban-column-C13:UC_LOXVY8"]')
-                : SELECTORS.bitrix.touchColumn);
+                : (isTouch3Mode
+                    ? (SELECTORS.bitrix.touch3Column || '[data-testid="kanban-column-C13:UC_VA6RW8"]')
+                    : SELECTORS.bitrix.touchColumn));
 
         const column = document.querySelector(columnSelector);
 
@@ -909,7 +1022,7 @@ async function processNextCard(gen = runGeneration) {
         } else {
             card = await scrollToFirstNonTodayCard(column, handledSet, gen);
             if (!card) {
-                const colLabel = isTouch2Mode ? '2 касание' : '1 касание';
+                const colLabel = getRunModeLabel(BOT_CONFIG.runMode);
                 alert(`В колонке «${colLabel}» нет заявок с датой не «сегодня» для обработки.`);
                 resetBotRuntimeState();
                 return;
@@ -1093,6 +1206,58 @@ async function processNextCard(gen = runGeneration) {
             const stageAfterTouch2 = (answer2 === 'send_touch3') ? 'touch3' : 'close';
             const moved2 = await moveCardToStage(stageAfterTouch2, gen);
             if (!moved2) return;
+            ensureQueueActive(gen);
+
+            await addHandledCardId(cardId);
+            await returnToCRMAndEscape();
+            processNextCard(gen);
+            return;
+        }
+
+        if (isTouch3Mode) {
+            const answer3 = await askTouch3SendConfirmation(cardId, cardTitleText, gen);
+            if (answer3 === null) {
+                removeLeftConfirmModal();
+                return;
+            }
+            ensureQueueActive(gen);
+
+            if (answer3 === 'skip') {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] [3 касание] Пропущено (Esc) — закрываем и идём дальше.`);
+                await addHandledCardId(cardId);
+                await closeChatAndCard();
+                processNextCard(gen);
+                return;
+            }
+
+            if (answer3 === 'close_deal') {
+                console.log(`[Бот Bitrix] [Заявка ${cardId}] [3 касание] Выбрано «Не отправлять и закрыть» (Ctrl+Esc) — закрываем сделку.`);
+                pressEscapeEverywhere();
+                await queueSleep(500, gen);
+                ensureQueueActive(gen);
+
+                const closed3 = await moveCardToStage('close', gen);
+                if (!closed3) return;
+                ensureQueueActive(gen);
+
+                await addHandledCardId(cardId);
+                await returnToCRMAndEscape();
+                processNextCard(gen);
+                return;
+            }
+
+            const inputReady3 = await clickReplyIfPresentInOpenChat(cardId, gen);
+            ensureQueueActive(gen);
+            if (!inputReady3) throw new Error(`В чате заявки ${cardId} не появилось поле ввода после «Ответить»`);
+
+            await sendSavedFlowInBitrixChat('touch3', gen);
+            await queueSleep(600, gen);
+
+            pressEscapeEverywhere();
+            await queueSleep(500, gen);
+
+            const moved3 = await moveCardToStage('close', gen);
+            if (!moved3) return;
             ensureQueueActive(gen);
 
             await addHandledCardId(cardId);
